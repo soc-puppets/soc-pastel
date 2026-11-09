@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "soc-pastel-veerwolf"
+version = "0.1.0.dev0"
+description = "PASTEL device pack for the VeeRwolf reference SoC (VeeR EL2)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["soc-pastel==0.1.0.dev0"]
+
+[project.urls]
+Homepage = "https://github.com/soc-puppets/soc-pastel"
+
+[project.entry-points."soc_pastel.devices"]
+veerwolf = "soc_pastel_veerwolf.device:VEERWOLF"
+
+[project.entry-points."soc_pastel.hdl"]
+veerwolf = "soc_pastel_veerwolf:HDL_ROOT"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/soc_pastel_veerwolf"]

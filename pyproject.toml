@@ -1,16 +1,81 @@
-# pyproject.toml
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "soc-pastel"
-version = "0.0.1"
-description = "PASTEL: Platform Agnostic Silicon Test Environment & Library (under development)"
+version = "0.1.0.dev0"
+description = "PASTEL: Platform Agnostic Silicon Test Environment & Library"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
-classifiers = ["Development Status :: 1 - Planning"]
+dependencies = [
+    "pytest>=8",
+    "pyelftools>=0.31",
+    "fusesoc>=2.3",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.optional-dependencies]
+jlink = ["pylink-square>=1.2"]
+pyocd = ["pyocd>=0.36"]
+dev = ["ruff>=0.15", "pytest-cov"]
 
 [project.urls]
 Homepage = "https://github.com/soc-puppets/soc-pastel"
+Issues = "https://github.com/soc-puppets/soc-pastel/issues"
+
+[project.scripts]
+pastel = "soc_pastel.cli:main"
+
+# --- Extension points --------------------------------------------------------
+# PASTEL discovers everything through these entry-point groups. First-party
+# implementations register here exactly as third-party packs would.
+
+[project.entry-points.pytest11]
+soc_pastel = "soc_pastel.pytest_plugin"
+
+[project.entry-points."soc_pastel.interfaces"]
+# "<interface type>/<implementation>" = "module:Class"
+"on_chip_debug/openocd" = "soc_pastel.interfaces.on_chip_debug.openocd:OpenOcd"
+"on_chip_debug/jlink" = "soc_pastel.interfaces.on_chip_debug.jlink:JLink"
+"on_chip_debug/pyocd" = "soc_pastel.interfaces.on_chip_debug.pyocd:PyOcd"
+# Simulation implementations of gpio/spi/uart are added as they are written.
+
+[project.entry-points."soc_pastel.platforms"]
+verilator = "soc_pastel.sim.verilator:VerilatorPlatform"
+
+[project.entry-points."soc_pastel.hdl"]
+soc_pastel = "soc_pastel:HDL_ROOT"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/soc_pastel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "D"]
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["soc_pastel", "soc_pastel_veerwolf"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+"packages/*/tests/*" = ["D"]
+"src/soc_pastel/conformance/*" = ["D103"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

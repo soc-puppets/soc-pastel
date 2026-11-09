@@ -1,0 +1,14 @@
+CAPI=2:
+# SPDX-License-Identifier: MIT
+name: soc-puppets:pastel:ep_pkg:0.1.0
+description: DPI contract between PASTEL testbench VIPs and the endpoint pump
+
+filesets:
+  rtl:
+    files:
+      - pastel_ep_pkg.sv
+    file_type: systemVerilogSource
+
+targets:
+  default:
+    filesets: [rtl]

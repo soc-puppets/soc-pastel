@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]" -e packages/veerwolf
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest tests packages/veerwolf/tests
+
+  conformance:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        location: [ram, ccm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator gcc-riscv64-unknown-elf openocd libbit-vector-perl
+      - run: pip install -e . -e packages/veerwolf
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/fusesoc
+            .pastel/verilator
+          key: verilator-${{ hashFiles('src/soc_pastel/sim/**', 'src/soc_pastel/interfaces/on_chip_debug/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/sim.py') }}
+      - name: Conformance suite on VeeRwolf (Verilator, ${{ matrix.location }})
+        run: >
+          pytest --pyargs soc_pastel.conformance
+          --device=veerwolf --platform=verilator --code-location=${{ matrix.location }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: logs-${{ matrix.location }}
+          path: /tmp/pytest-of-*/
