@@ -41,15 +41,16 @@ class OpenOcd(OnChipDebug):
     """On-chip debug through an OpenOCD process, driven over its Tcl port.
 
     Binding config keys:
-        impl: ``"openocd"``.
-        transport: Name of a shipped transport fragment (``"remote_bitbang"``)
-            or inline Tcl. With ``remote_bitbang`` the port comes from the
-            platform's :meth:`~soc_pastel.core.Platform.debug_connection`.
-        cpu: Name of a shipped CPU fragment (``"veer"``) or inline Tcl.
-        chain: Inline Tcl defining the TAP and creating ``$_TARGETNAME``.
-        executable: The ``openocd`` binary; defaults to ``$PASTEL_OPENOCD``
-            or ``openocd``.
-        startup_timeout_s: How long to wait for OpenOCD to examine the target.
+
+    - ``impl``: ``"openocd"``.
+    - ``transport``: name of a shipped transport fragment (``"remote_bitbang"``)
+      or inline Tcl. With ``remote_bitbang`` the port comes from the platform's
+      :meth:`~soc_pastel.core.platform.Platform.debug_connection`.
+    - ``cpu``: name of a shipped CPU fragment (``"veer"``) or inline Tcl.
+    - ``chain``: inline Tcl defining the TAP and creating ``$_TARGETNAME``.
+    - ``executable``: the ``openocd`` binary; defaults to ``$PASTEL_OPENOCD``
+      or ``openocd``.
+    - ``startup_timeout_s``: how long to wait for OpenOCD to examine the target.
 
     In simulation, OpenOCD runs beside the simulator so the chatty bitbang
     link stays local; only Tcl commands cross to the test process.

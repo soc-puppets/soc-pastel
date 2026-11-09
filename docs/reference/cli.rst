@@ -1,0 +1,122 @@
+Command line and configuration
+==============================
+
+pytest options
+--------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--device=<name>``
+     - Device to test. Optional when exactly one device pack is installed.
+   * - ``--platform=<name>``
+     - Platform to run on.
+   * - ``--variant=<name>``
+     - Device variant; normally chosen from the platform.
+   * - ``--code-location=<name>``
+     - Where firmware runs; defaults to the variant's first code location.
+   * - ``--verilator-workdir=<dir>``
+     - Where Verilator models are built (default ``.pastel/verilator``).
+   * - ``--verilator=<exe>``
+     - The Verilator executable.
+
+Markers
+-------
+
+``@pytest.mark.requires(*capabilities)``
+   Skip the test unless the harness offers every capability: interface
+   instance names, or ``backdoor``, ``sim_time``, ``waves``.
+
+Fixtures
+--------
+
+``harness``
+   An open :py:class:`~soc_pastel.core.harness.PlatformHarness`, per test.
+``firmware``
+   Builds and runs firmware on that harness; sources are relative to the test
+   file.
+``pastel_device``
+   The :py:class:`~soc_pastel.core.device.Device` under test (session scope).
+
+The ``pastel`` command
+----------------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Command
+     - Does
+   * - ``pastel list``
+     - List installed devices and platforms
+   * - ``pastel describe <device> [--variant V]``
+     - Print a device's memory map, code locations and bindings
+   * - ``pastel cores-path``
+     - FuseSoC core roots of installed packs, for ``--cores-root`` or ``FUSESOC_CORES``
+   * - ``pastel fw-path``
+     - The firmware runtime directory
+
+Environment variables
+---------------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Variable
+     - Meaning
+   * - ``PASTEL_RISCV_PREFIX``
+     - Toolchain prefix (default ``riscv64-unknown-elf-``)
+   * - ``PASTEL_OPENOCD``
+     - OpenOCD executable (default ``openocd``)
+   * - ``PASTEL_VEERWOLF_WORKSPACE``
+     - Existing FuseSoC workspace for the VeeRwolf pack
+
+Simulator plusargs
+------------------
+
+Set by PASTEL; listed for running a model by hand.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Plusarg
+     - Meaning
+   * - ``+pastel_host=<ip>:<port>:<token>``
+     - Where to connect. Without it the model runs standalone.
+   * - ``+pastel_jtag_port=<n>``
+     - JTAG server port (default: any free port, reported in HELLO)
+   * - ``+pastel_clk_period_ps=<n>``
+     - Clock period (default 20000, i.e. 50 MHz)
+
+Entry-point groups
+------------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Group
+     - Name
+     - Value
+   * - ``soc_pastel.devices``
+     - device name
+     - a ``Device`` instance
+   * - ``soc_pastel.platforms``
+     - platform name
+     - a ``Platform`` subclass
+   * - ``soc_pastel.interfaces``
+     - ``<type>/<impl>``
+     - an ``Interface`` subclass
+   * - ``soc_pastel.hdl``
+     - pack name
+     - a ``Path`` containing FuseSoC cores
+
+Variant parameters
+------------------
+
+The core never interprets ``Variant.params``; platforms document the keys they
+read.
+
+``sim_sources``
+   ``"module:function"`` returning
+   :py:class:`~soc_pastel.sim.sources.SimSources`. Read by simulation platforms.

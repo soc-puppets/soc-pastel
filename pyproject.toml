@@ -26,10 +26,12 @@ classifiers = [
 [project.optional-dependencies]
 jlink = ["pylink-square>=1.2"]
 pyocd = ["pyocd>=0.36"]
-dev = ["ruff>=0.15", "pytest-cov"]
+dev = ["ruff>=0.15", "pytest-cov", "pytest-xdist"]
+docs = ["sphinx>=8", "furo>=2024.8", "sphinx-copybutton>=0.5"]
 
 [project.urls]
 Homepage = "https://github.com/soc-puppets/soc-pastel"
+Documentation = "https://soc-pastel.readthedocs.io"
 Issues = "https://github.com/soc-puppets/soc-pastel/issues"
 
 [project.scripts]

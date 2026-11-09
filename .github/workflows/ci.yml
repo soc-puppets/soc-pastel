@@ -21,6 +21,17 @@ jobs:
       - run: ruff format --check .
       - run: pytest tests packages/veerwolf/tests
 
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[docs]"
+      # -n: fail on any unresolved reference to PASTEL's own API.
+      - run: sphinx-build -n -W --keep-going -b html docs docs/_build/html
+
   conformance:
     runs-on: ubuntu-24.04
     strategy:

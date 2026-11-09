@@ -16,6 +16,9 @@ module pastel_server #(
 ) (
   input logic clk
 );
+  timeunit 1ns;
+  timeprecision 1ps;  // $time below is therefore in ns, whatever the design uses
+
   import "DPI-C" function int  pastel_server_connect(input string spec);
   import "DPI-C" function int  pastel_server_poll(input longint time_ns);
   import "DPI-C" function void pastel_server_close();

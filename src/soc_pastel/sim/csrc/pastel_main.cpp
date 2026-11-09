@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
 //
 // Verilator main for PASTEL testbenches. The testbench top must have a single
-// input `clk`; this drives it with a 20-unit period (50 MHz at 1 ns units)
-// until $finish, or until SIGINT/SIGTERM.
+// input `clk`; this drives it until $finish, or until SIGINT/SIGTERM.
+//
+// Clock period: +pastel_clk_period_ps=<n> (default 20000, i.e. 50 MHz). Time
+// advances in the model's time precision, so the period is correct whatever
+// timescale the design uses (the precision must be 1 ps or finer for periods
+// that are not a whole number of ns).
 
+#include <cmath>
 #include <csignal>
+#include <cstdio>
 #include <memory>
 
 #include "verilated.h"
@@ -24,10 +30,18 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
+  long long period_ps = 20000;
+  const char* arg = ctx->commandArgsPlusMatch("pastel_clk_period_ps=");
+  if (arg && *arg) std::sscanf(arg, "+pastel_clk_period_ps=%lld", &period_ps);
+  // Half period in units of the time precision (10^timeprecision seconds).
+  double half_s = period_ps * 1e-12 / 2.0;
+  uint64_t half = uint64_t(std::llround(half_s / std::pow(10.0, ctx->timeprecision())));
+  if (half == 0) half = 1;
+
   top->clk = 0;
   while (!ctx->gotFinish() && !stop_requested) {
     top->eval();
-    ctx->timeInc(10);
+    ctx->timeInc(half);
     top->clk = !top->clk;
   }
   top->final();

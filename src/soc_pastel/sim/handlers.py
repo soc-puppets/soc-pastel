@@ -13,8 +13,14 @@ from soc_pastel.core.memory import MemoryInterface
 _REPLY_TIMEOUT_S = 60.0
 
 
-class _RequestReply(EndpointHandler):
-    """Base for endpoints answering requests tagged with a sequence number."""
+class RequestReplyHandler(EndpointHandler):
+    """Base for handlers whose VIP answers requests tagged with a sequence number.
+
+    Subclasses send a request carrying a sequence number from
+    :meth:`_next_seq`, call :meth:`_deliver` from :meth:`on_message` when the
+    matching reply arrives, and :meth:`_wait` for it. Waiting fails cleanly if
+    the simulation ends first.
+    """
 
     def __init__(self, info: EndpointInfo, send) -> None:
         super().__init__(info, send)
@@ -48,7 +54,7 @@ class _RequestReply(EndpointHandler):
             self._cv.notify_all()
 
 
-class PlatformControl(_RequestReply):
+class PlatformControl(RequestReplyHandler):
     """The ``pastel.platform`` endpoint: finish and simulation time."""
 
     type_name = "pastel.platform"
@@ -68,7 +74,7 @@ class PlatformControl(_RequestReply):
         return int.from_bytes(self._wait(0, "time request"), "little")
 
 
-class Backdoor(_RequestReply):
+class Backdoor(RequestReplyHandler):
     """One ``pastel.backdoor`` endpoint: byte access to one memory."""
 
     type_name = "pastel.backdoor"
