@@ -86,9 +86,16 @@ device descriptor.
    * - GET_TIME
      - host → sim
      - ``02``
+   * - SET_WAVES
+     - host → sim
+     - ``03``, u8 enable
    * - TIME
      - sim → host
      - ``82``, u64 nanoseconds
+   * - WAVES
+     - sim → host
+     - ``83``, u8: 1 if waves are now being dumped. Answers SET_WAVES; always
+       0 from a model built without waves.
 
 ``pastel.backdoor``
 ~~~~~~~~~~~~~~~~~~~
@@ -165,6 +172,10 @@ Carried on RTT channel 1. Each message is u8 id, u8 length, payload.
      - ``05``
      - target → host
      - u32 mcause, u32 mepc, u32 mtval
+   * - WAVES
+     - ``06``
+     - target → host
+     - u8 enable; the host answers with HOST_WAVES
    * - HOST_DATA
      - ``81``
      - host → target
@@ -173,6 +184,10 @@ Carried on RTT channel 1. Each message is u8 id, u8 length, payload.
      - ``82``
      - host → target
      - u32 checkpoint id
+   * - HOST_WAVES
+     - ``83``
+     - host → target
+     - u8: 1 if waves are now being dumped
 
 RTT control block
 -----------------

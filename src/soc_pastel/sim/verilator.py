@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 import pytest
 
 from soc_pastel import HDL_ROOT
+from soc_pastel.core.capabilities import WAVES
 from soc_pastel.core.device import Device, Variant
 from soc_pastel.core.endpoints import EndpointHandler
 from soc_pastel.core.errors import ConfigurationError, TargetError
@@ -44,19 +45,26 @@ def _content_key(path: Path) -> bytes:
 
 
 class VerilatorImage(PlatformImage):
-    """A Verilator model of a device variant's testbench."""
+    """A Verilator model of a device variant's testbench.
 
-    def __init__(self, sources: SimSources, workdir: Path, verilator: str, jobs: int) -> None:
+    A model that can dump waveforms is slower, so it is a separate image
+    (its key ends in ``-waves``) built only when waves are asked for.
+    """
+
+    def __init__(
+        self, sources: SimSources, workdir: Path, verilator: str, jobs: int, waves: bool = False
+    ) -> None:
         self.sources = sources
         self.verilator = verilator
         self.jobs = jobs
+        self.waves = waves
         h = hashlib.sha256(sources.key.encode() + sources.top.encode())
         for arg in [*map(str, PASTEL_HDL + PASTEL_CPP), *sources.args]:
             h.update(arg.encode())
             p = Path(arg)
             if not arg.startswith(("+", "-")) and p.is_file():
                 h.update(_content_key(p))
-        self._key = f"{sources.top}-{h.hexdigest()[:12]}"
+        self._key = f"{sources.top}-{h.hexdigest()[:12]}" + ("-waves" if waves else "")
         self.dir = workdir / "images" / self._key
         self.exe = self.dir / "Vsim"
 
@@ -95,6 +103,7 @@ class VerilatorImage(PlatformImage):
                 "-Wno-lint",
                 "-Wno-style",
                 "-Wno-TIMESCALEMOD",
+                *(["--trace-fst"] if self.waves else []),
                 "-CFLAGS",
                 f"-I{self.dir} -I{SIM_CSRC}",
                 f"+incdir+{SIM_HW}",
@@ -118,7 +127,11 @@ class VerilatorPlatform(SimulationPlatform):
     Options:
         ``--verilator-workdir``: where models are built (shared across runs).
         ``--verilator``: the verilator executable.
+        ``--waves``: dump waveforms to :data:`WAVES_FILE` in the run directory.
     """
+
+    #: Waveform file written to the run directory when waves are enabled.
+    WAVES_FILE: ClassVar[str] = "sim.fst"
 
     name: ClassVar[str] = "verilator"
     platform_handlers: ClassVar[Mapping[str, type[EndpointHandler]]] = {
@@ -129,6 +142,7 @@ class VerilatorPlatform(SimulationPlatform):
     def __init__(self, device: Device, variant: Variant, options: Mapping[str, Any]) -> None:
         super().__init__(device, variant, options)
         self.workdir = Path(options.get("verilator_workdir") or ".pastel/verilator").resolve()
+        self.waves = bool(options.get("waves"))
         self._image: VerilatorImage | None = None
         self._proc: subprocess.Popen | None = None
         self._session: SocketEndpointSession | None = None
@@ -141,6 +155,11 @@ class VerilatorPlatform(SimulationPlatform):
         group.addoption("--verilator-workdir", help="Model build directory.")
         group.addoption("--verilator", default="verilator", help="Verilator executable.")
 
+    def capabilities(self) -> frozenset[str]:
+        """Backdoor and simulation time, plus waves when run with ``--waves``."""
+        features = super().capabilities()
+        return features | {WAVES} if self.waves else features
+
     def image(self) -> VerilatorImage:  # noqa: D102
         if self._image is None:
             sources = load_sim_sources(self.variant, self.workdir / "sources")
@@ -149,6 +168,7 @@ class VerilatorPlatform(SimulationPlatform):
                 self.workdir,
                 self.options.get("verilator") or "verilator",
                 os.cpu_count() or 4,
+                waves=self.waves,
             )
         return self._image
 
@@ -163,8 +183,11 @@ class VerilatorPlatform(SimulationPlatform):
         image.build()
         self._listener = Listener()
         self._log = open(self.run_dir / "sim.log", "w")
+        args = [str(image.exe), f"+pastel_host={self._listener.spec}"]
+        if self.waves:
+            args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
         self._proc = subprocess.Popen(
-            [str(image.exe), f"+pastel_host={self._listener.spec}"],
+            args,
             cwd=self.run_dir,
             stdout=self._log,
             stderr=subprocess.STDOUT,
@@ -210,6 +233,9 @@ class VerilatorPlatform(SimulationPlatform):
 
     def time_ns(self) -> int | None:  # noqa: D102
         return self._control().time_ns()
+
+    def set_waves(self, enable: bool) -> bool:  # noqa: D102
+        return self._control().set_waves(enable) if self.waves else False
 
     def backdoor(self) -> MemoryInterface | None:  # noqa: D102
         session = self.endpoints

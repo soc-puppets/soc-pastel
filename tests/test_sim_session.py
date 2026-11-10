@@ -31,6 +31,7 @@ class FakeSim(threading.Thread):
         self.addr, self.token = (host, int(port)), token or tok
         self.mem = bytearray(size)
         self.finished = threading.Event()
+        self.waves = False
 
     def run(self):
         s = socket.create_connection(self.addr)
@@ -70,6 +71,10 @@ class FakeSim(threading.Thread):
                 elif f.endpoint == 1:
                     if f.payload[0] == 0x01:
                         self.finished.set()
+                    elif f.payload[0] == 0x03:
+                        self.waves = bool(f.payload[1])
+                        reply = bytes([0x83, self.waves])
+                        s.sendall(encode_frame(Frame(1, FrameKind.DATA, reply)))
                     elif f.payload[0] == 0x02:
                         s.sendall(
                             encode_frame(
@@ -101,6 +106,8 @@ def test_session_backdoor_time_sync_and_finish():
     assert mem.can_access(0x8000, 0x1000) and not mem.can_access(0x9000)
     control = session.handler("platform")
     assert control.time_ns() == 123456
+    assert control.set_waves(True) is True and sim.waves
+    assert control.set_waves(False) is False and not sim.waves
     session.sync("ram")
     control.request_finish()
     assert sim.finished.wait(5)

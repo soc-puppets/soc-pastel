@@ -27,9 +27,11 @@ typedef enum {
   PASTEL_MBOX_DATA       = 0x03,  // opaque test data
   PASTEL_MBOX_FINISH     = 0x04,  // i32 result: 0 = pass, anything else = fail
   PASTEL_MBOX_FAULT      = 0x05,  // u32 cause, u32 pc, u32 tval
+  PASTEL_MBOX_WAVES      = 0x06,  // u8 enable; answered with HOST_WAVES
   // Host -> target
   PASTEL_MBOX_HOST_DATA  = 0x81,  // opaque test data
   PASTEL_MBOX_HOST_ACK   = 0x82,  // u32 checkpoint id being released
+  PASTEL_MBOX_HOST_WAVES = 0x83,  // u8: 1 if waves are now being dumped
 } pastel_mbox_id_t;
 
 // Send a message. Blocks until it fits in the RTT buffer.

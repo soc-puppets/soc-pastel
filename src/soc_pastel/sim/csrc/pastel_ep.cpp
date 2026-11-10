@@ -32,7 +32,13 @@ constexpr uint32_t kMaxFrame = 16u * 1024u * 1024u;
 enum Kind : uint8_t { HELLO = 0, DATA = 1, ERROR = 2, BYE = 3, SYNC = 4, SYNC_ACK = 5 };
 
 // pastel.platform messages
-enum PlatformOp : uint8_t { PF_FINISH = 0x01, PF_GET_TIME = 0x02, PF_TIME = 0x82 };
+enum PlatformOp : uint8_t {
+  PF_FINISH = 0x01,
+  PF_GET_TIME = 0x02,
+  PF_SET_WAVES = 0x03,
+  PF_TIME = 0x82,
+  PF_WAVES = 0x83,
+};
 
 struct Endpoint {
   std::string name, type, path;
@@ -49,6 +55,7 @@ struct Pump {
   std::vector<std::pair<std::string, std::string>> info;  // HELLO "info" entries (JSON values)
   int64_t time_ns = 0;
   int platform_ep = -1;
+  bool waves_available = false, waves_on = false;
 };
 
 Pump& pump() {
@@ -120,6 +127,10 @@ void handle_platform(const std::vector<uint8_t>& m) {
     std::vector<uint8_t> b{PF_TIME};
     for (int i = 0; i < 8; i++) b.push_back((uint64_t(p.time_ns) >> (8 * i)) & 0xFF);
     queue_frame(uint16_t(p.platform_ep), DATA, b.data(), b.size());
+  } else if (m[0] == PF_SET_WAVES && m.size() >= 2) {
+    if (p.waves_available) p.waves_on = m[1] != 0;
+    const uint8_t b[] = {PF_WAVES, uint8_t(p.waves_on)};
+    queue_frame(uint16_t(p.platform_ep), DATA, b, sizeof b);
   }
 }
 
@@ -188,6 +199,13 @@ void receive() {
 void pastel_sim_info(const char* key, const char* json_value) {
   pump().info.emplace_back(key, json_value);
 }
+
+void pastel_sim_waves_init(bool on) {
+  pump().waves_available = true;
+  pump().waves_on = on;
+}
+
+bool pastel_sim_waves_on() { return pump().waves_on; }
 
 extern "C" {
 

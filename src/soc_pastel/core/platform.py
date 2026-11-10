@@ -115,6 +115,15 @@ class Platform(ABC):
         """Backdoor memory access, or None if the platform has none."""
         return None
 
+    def set_waves(self, enable: bool) -> bool:
+        """Turn waveform dumping on or off; return True if waves are now being dumped.
+
+        Does nothing and returns False on a platform without the ``"waves"``
+        capability, so tests and firmware may call it unconditionally. Tests
+        that need waveforms should ``require`` the capability instead.
+        """
+        return False
+
     def debug_connection(self) -> Mapping[str, Any]:
         """How on-chip debug reaches the target on this platform.
 

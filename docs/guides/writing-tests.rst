@@ -155,6 +155,42 @@ Capabilities are interface instance names from the device descriptor
 (``"spi0"``, ``"gpio"``) and platform features: ``"backdoor"``, ``"sim_time"``,
 ``"waves"``.
 
+.. _waves:
+
+Waveforms
+---------
+
+Run with ``--waves`` to dump waveforms on platforms that can:
+
+.. code-block:: shell
+
+   pytest tests/ --device=<device> --platform=verilator --waves
+
+Verilator writes ``sim.fst``, covering the whole testbench, next to
+``sim.log`` in each test's temporary directory. The first run with ``--waves``
+builds a second, slower model; runs without it keep using the fast one.
+
+Dumping starts at time 0. To keep a waveform small, turn dumping off and on
+around the part you care about, from the test or from firmware:
+
+.. code-block:: python
+
+   @pytest.mark.requires("waves")
+   def test_wakeup(harness, firmware):
+       harness.platform.set_waves(False)
+       ...
+       harness.platform.set_waves(True)
+
+.. code-block:: c
+
+   pastel_waves(0);
+   boot_slowly();
+   pastel_waves(1);
+
+Both return once the platform has made the change. Without ``--waves``, or on
+a platform that cannot dump waves, they do nothing, so a test only needs
+``requires("waves")`` if it is pointless without a waveform.
+
 Running tests
 -------------
 

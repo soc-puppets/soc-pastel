@@ -55,14 +55,16 @@ class RequestReplyHandler(EndpointHandler):
 
 
 class PlatformControl(RequestReplyHandler):
-    """The ``pastel.platform`` endpoint: finish and simulation time."""
+    """The ``pastel.platform`` endpoint: finish, simulation time and waves."""
 
     type_name = "pastel.platform"
-    _FINISH, _GET_TIME, _TIME = 0x01, 0x02, 0x82
+    _FINISH, _GET_TIME, _SET_WAVES, _TIME, _WAVES = 0x01, 0x02, 0x03, 0x82, 0x83
 
     def on_message(self, payload: bytes) -> None:  # noqa: D102
         if payload[:1] == bytes([self._TIME]) and len(payload) == 9:
             self._deliver(0, payload[1:])
+        elif payload[:1] == bytes([self._WAVES]) and len(payload) == 2:
+            self._deliver(1, payload[1:])
 
     def request_finish(self) -> None:
         """Ask the simulator to finish."""
@@ -72,6 +74,16 @@ class PlatformControl(RequestReplyHandler):
         """Current simulation time in nanoseconds."""
         self.send(bytes([self._GET_TIME]))
         return int.from_bytes(self._wait(0, "time request"), "little")
+
+    def set_waves(self, enable: bool) -> bool:
+        """Turn waveform dumping on or off; return True if waves are now being dumped.
+
+        The reply arrives once the simulator has applied the change, so
+        whatever the host does next is (or is not) in the waveform. A model
+        built without tracing always answers False.
+        """
+        self.send(bytes([self._SET_WAVES, int(enable)]))
+        return self._wait(1, "waves request") != b"\x00"
 
 
 class Backdoor(RequestReplyHandler):

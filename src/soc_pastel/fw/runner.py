@@ -32,8 +32,10 @@ class Mbox(IntEnum):
     DATA = 0x03
     FINISH = 0x04
     FAULT = 0x05
+    WAVES = 0x06
     HOST_DATA = 0x81
     HOST_ACK = 0x82
+    HOST_WAVES = 0x83
 
 
 @dataclass
@@ -77,7 +79,9 @@ def run_firmware(
     """Reset the target, load and run ``elf``, and wait for it to finish.
 
     Checkpoints sent with ``wait`` set are acknowledged after ``on_checkpoint``
-    returns, so host code can act at a known point in the firmware.
+    returns, so host code can act at a known point in the firmware. Firmware
+    calls to ``pastel_waves`` are passed to :meth:`Platform.set_waves
+    <soc_pastel.core.platform.Platform.set_waves>`.
 
     Raises:
         FirmwareFault: The firmware took an unexpected exception.
@@ -94,6 +98,12 @@ def run_firmware(
     rtt.wait_ready(timeout_s)
     result = FirmwareResult(result=-1)
     text, line, mbox = [], bytearray(), bytearray()
+
+    def send(mid: Mbox, payload: bytes) -> None:
+        msg = bytes([mid, len(payload)]) + payload
+        while msg:
+            msg = msg[rtt.write_down(MAILBOX_CHANNEL, msg) :]
+
     while True:
         chunk = rtt.read_up(TEXT_CHANNEL)
         if chunk:
@@ -117,9 +127,10 @@ def run_firmware(
                 result.checkpoints.append(cp)
                 if on_checkpoint:
                     on_checkpoint(cp)
-                ack = bytes([Mbox.HOST_ACK, 4]) + payload
-                while ack:
-                    ack = ack[rtt.write_down(MAILBOX_CHANNEL, ack) :]
+                send(Mbox.HOST_ACK, payload)
+            elif mid == Mbox.WAVES:
+                on = harness.platform.set_waves(payload[:1] != b"\x00")
+                send(Mbox.HOST_WAVES, bytes([on]))
             elif mid == Mbox.DATA:
                 result.data.append(payload)
             elif mid == Mbox.FINISH:

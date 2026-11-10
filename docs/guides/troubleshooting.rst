@@ -15,6 +15,9 @@ Where the logs are
      - ``openocd.log``, ``openocd.cfg`` in the same directory
    * - Verilator build
      - ``.pastel/verilator/images/<top>-<hash>/build.log``
+       (``<top>-<hash>-waves`` for the ``--waves`` model)
+   * - Waveform (with ``--waves``)
+     - ``sim.fst`` in the test's pytest temporary directory
    * - Firmware build
      - ``.pastel/firmware/<device>/<name>-<location>-<hash>/build.log``
 
@@ -28,6 +31,12 @@ Building
 The error shows the end of ``build.log``. Errors in your own files usually mean
 a missing ``+incdir+`` or file in the ``sim_sources`` hook, or a top module that
 isn't named in ``SimSources.top``.
+
+**The ``--waves`` build fails with** ``'lz4.h' file not found``.
+Recent Verilator needs LZ4 to write FST waveforms, and the compiler isn't
+finding it. Install LZ4, and where it lives outside the default search path
+(Homebrew on Apple silicon), point the compiler at it:
+``export CPATH=/opt/homebrew/include LIBRARY_PATH=/opt/homebrew/lib``.
 
 **The model rebuilds on every run.**
 A listed file changes between runs in more than comments. Make the generating

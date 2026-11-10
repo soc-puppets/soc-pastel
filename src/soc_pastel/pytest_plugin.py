@@ -39,6 +39,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--code-location",
         help="Where firmware is linked to run; defaults to the variant's first code location.",
     )
+    group.addoption(
+        "--waves",
+        action="store_true",
+        help="Dump waveforms from the start of each test, on platforms that can.",
+    )
     for name in registry.platform_names():
         try:
             registry.platform(name).add_options(parser)

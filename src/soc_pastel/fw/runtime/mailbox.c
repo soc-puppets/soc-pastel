@@ -45,6 +45,15 @@ void pastel_checkpoint(uint32_t id, int wait) {
   }
 }
 
+int pastel_waves(int enable) {
+  uint8_t b = enable ? 1 : 0;
+  pastel_mbox_send(PASTEL_MBOX_WAVES, &b, 1);
+  for (;;) {
+    pastel_mbox_id_t got;
+    if (pastel_mbox_recv(&got, &b, 1) == 1 && got == PASTEL_MBOX_HOST_WAVES) return b;
+  }
+}
+
 void pastel_send(const void *data, uint8_t length) {
   pastel_mbox_send(PASTEL_MBOX_DATA, data, length);
 }

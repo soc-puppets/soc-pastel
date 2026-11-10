@@ -25,6 +25,9 @@ The API
      - Print a line
    * - ``pastel_checkpoint(id, wait)``
      - Report a checkpoint; if ``wait``, block until the host acknowledges
+   * - ``pastel_waves(enable)``
+     - Turn waveform dumping on or off and wait until it has happened; returns
+       1 if waves are being dumped (see :ref:`waves`)
    * - ``pastel_send(data, len)``
      - Send up to 255 bytes to the host test
    * - ``pastel_finish(result)``

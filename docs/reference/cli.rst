@@ -17,6 +17,9 @@ pytest options
      - Device variant; normally chosen from the platform.
    * - ``--code-location=<name>``
      - Where firmware runs; defaults to the variant's first code location.
+   * - ``--waves``
+     - Dump waveforms from the start of each test, on platforms that can
+       (see :ref:`waves`).
    * - ``--verilator-workdir=<dir>``
      - Where Verilator models are built (default ``.pastel/verilator``).
    * - ``--verilator=<exe>``
@@ -88,6 +91,9 @@ Set by PASTEL; listed for running a model by hand.
      - JTAG server port (default: any free port, reported in HELLO)
    * - ``+pastel_clk_period_ps=<n>``
      - Clock period (default 20000, i.e. 50 MHz)
+   * - ``+pastel_waves=<file>``
+     - Dump an FST waveform to ``<file>``. Needs a model built with waves
+       (an image whose name ends in ``-waves``).
 
 Entry-point groups
 ------------------
