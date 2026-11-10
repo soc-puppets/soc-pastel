@@ -25,12 +25,15 @@ autodoc_default_options = {"members": True, "show-inheritance": True}
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
 
-html_theme = "furo"
+html_theme = "sphinx_rtd_theme"
 html_title = f"PASTEL {release}"
-html_theme_options = {
-    "source_repository": "https://github.com/soc-puppets/soc-pastel/",
-    "source_branch": "main",
-    "source_directory": "docs/",
+# "Edit on GitHub" links.
+html_context = {
+    "display_github": True,
+    "github_user": "soc-puppets",
+    "github_repo": "soc-pastel",
+    "github_version": "main",
+    "conf_py_path": "/docs/",
 }
 
 source_suffix = {".rst": "restructuredtext"}

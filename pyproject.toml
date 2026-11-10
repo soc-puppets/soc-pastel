@@ -27,7 +27,7 @@ classifiers = [
 jlink = ["pylink-square>=1.2"]
 pyocd = ["pyocd>=0.36"]
 dev = ["ruff>=0.15", "pytest-cov", "pytest-xdist"]
-docs = ["sphinx>=8", "furo>=2024.8", "sphinx-copybutton>=0.5"]
+docs = ["sphinx>=8", "sphinx-rtd-theme>=3.0", "sphinx-copybutton>=0.5"]
 
 [project.urls]
 Homepage = "https://github.com/soc-puppets/soc-pastel"
