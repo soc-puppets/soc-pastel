@@ -95,7 +95,8 @@ device descriptor.
    * - WAVES
      - sim → host
      - ``83``, u8: 1 if waves are now being dumped. Answers SET_WAVES; always
-       0 from a model built without waves.
+       0 from a model built without waves, always 1 from a simulator that
+       cannot pause dumping.
 
 ``pastel.backdoor``
 ~~~~~~~~~~~~~~~~~~~

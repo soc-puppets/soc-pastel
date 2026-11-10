@@ -80,7 +80,8 @@ class PlatformControl(RequestReplyHandler):
 
         The reply arrives once the simulator has applied the change, so
         whatever the host does next is (or is not) in the waveform. A model
-        built without tracing always answers False.
+        built without tracing always answers False; a simulator that cannot
+        pause dumping (Verilator) always answers True.
         """
         self.send(bytes([self._SET_WAVES, int(enable)]))
         return self._wait(1, "waves request") != b"\x00"

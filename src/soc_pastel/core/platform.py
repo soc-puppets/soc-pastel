@@ -121,6 +121,10 @@ class Platform(ABC):
         Does nothing and returns False on a platform without the ``"waves"``
         capability, so tests and firmware may call it unconditionally. Tests
         that need waveforms should ``require`` the capability instead.
+
+        Turning waves off is a request to keep the waveform small, not a
+        guarantee: a simulator that cannot pause dumping (Verilator) keeps
+        dumping and returns True.
         """
         return False
 

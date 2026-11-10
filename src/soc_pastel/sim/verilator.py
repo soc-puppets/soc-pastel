@@ -29,9 +29,14 @@ SIM_HW = HDL_ROOT / "sim" / "hw"
 SIM_CSRC = HDL_ROOT / "sim" / "csrc"
 OCD_HW = HDL_ROOT / "interfaces" / "on_chip_debug" / "hw"
 
-#: PASTEL's own HDL and C++, compiled into every Verilator model.
-PASTEL_HDL = [SIM_HW / "pastel_ep_pkg.sv", SIM_HW / "pastel_server.sv", OCD_HW / "pastel_jtag.sv"]
-PASTEL_CPP = [SIM_CSRC / "pastel_ep.cpp", OCD_HW / "pastel_jtag.cpp", SIM_CSRC / "pastel_main.cpp"]
+#: PASTEL's own HDL and DPI C++, compiled into every Verilator model.
+PASTEL_HDL = [
+    SIM_HW / "pastel_ep_pkg.sv",
+    SIM_HW / "pastel_clock.sv",
+    SIM_HW / "pastel_server.sv",
+    OCD_HW / "pastel_jtag.sv",
+]
+PASTEL_CPP = [SIM_CSRC / "pastel_ep.cpp", OCD_HW / "pastel_jtag.cpp"]
 
 
 def _content_key(path: Path) -> bytes:
@@ -46,6 +51,9 @@ def _content_key(path: Path) -> bytes:
 
 class VerilatorImage(PlatformImage):
     """A Verilator model of a device variant's testbench.
+
+    The testbench top is plain SystemVerilog with no ports, as for any other
+    simulator: Verilator supplies the ``main`` and the scheduler (``--binary``).
 
     A model that can dump waveforms is slower, so it is a separate image
     (its key ends in ``-waves``) built only when waves are asked for.
@@ -82,19 +90,13 @@ class VerilatorImage(PlatformImage):
             if shutil.which(self.verilator) is None:
                 raise ConfigurationError(f"{self.verilator} not found")
             self.dir.mkdir(parents=True, exist_ok=True)
-            top = self.sources.top
-            (self.dir / "pastel_top.h").write_text(
-                f'#include "V{top}.h"\n#define PASTEL_TOP_CLASS V{top}\n'
-            )
             cmd = [
                 self.verilator,
-                "--cc",
-                "--exe",
-                "--build",
+                "--binary",
                 "-j",
                 str(self.jobs),
                 "--top-module",
-                top,
+                self.sources.top,
                 "--Mdir",
                 str(self.dir / "obj"),
                 "-o",
@@ -103,9 +105,9 @@ class VerilatorImage(PlatformImage):
                 "-Wno-lint",
                 "-Wno-style",
                 "-Wno-TIMESCALEMOD",
-                *(["--trace-fst"] if self.waves else []),
+                *(["--trace-fst", "+define+PASTEL_WAVES"] if self.waves else []),
                 "-CFLAGS",
-                f"-I{self.dir} -I{SIM_CSRC}",
+                f"-I{SIM_CSRC}",
                 f"+incdir+{SIM_HW}",
                 *map(str, PASTEL_HDL),
                 *self.sources.args,

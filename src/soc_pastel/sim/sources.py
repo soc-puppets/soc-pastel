@@ -24,7 +24,8 @@ class SimSources:
     """HDL for a testbench.
 
     Attributes:
-        top: Testbench top module. It must have a single input, ``clk``.
+        top: Testbench top module. It has no ports and generates its own
+            clock, as for any simulator.
         args: Simulator-independent source arguments: file paths,
             ``+incdir+<dir>`` and ``-D<define>[=<value>]``. Files ending in
             ``.vlt`` are Verilator configuration files and other simulators

@@ -272,9 +272,11 @@ VeeRwolf's is ``packages/veerwolf/src/soc_pastel_veerwolf/hw/pastel_veerwolf_tb.
 Requirements
 ~~~~~~~~~~~~
 
-1. **The top module has exactly one port: ``input logic clk``.** PASTEL drives
-   it, at 50 MHz by default (set ``+pastel_clk_period_ps=<n>`` to change it).
-   Simulated time is correct whatever timescale the design uses.
+1. **The top module is plain SystemVerilog with no ports**, as for any
+   simulator, and generates its own clock. ``pastel_clock`` gives you one: 50 MHz
+   by default (set its ``PERIOD_PS`` parameter, or ``+pastel_clk_period_ps=<n>``
+   at run time), correct whatever timescale the design uses. Any other clock
+   generator works too.
 2. **Generate reset inside the testbench**, e.g. hold it for 16 cycles.
 3. **Instantiate ``pastel_server`` exactly once.** It connects to the test
    process on the first clock edge and ends the simulation when asked.
@@ -292,7 +294,10 @@ Requirements
 
    `include "pastel_backdoor.svh"
 
-   module my_chip_tb (input logic clk);
+   module my_chip_tb;
+     logic clk;
+     pastel_clock u_clk (.clk(clk));
+
      logic [4:0] rst_count = '0;
      logic rst;
      always_ff @(posedge clk) if (!rst_count[4]) rst_count <= rst_count + 1'b1;

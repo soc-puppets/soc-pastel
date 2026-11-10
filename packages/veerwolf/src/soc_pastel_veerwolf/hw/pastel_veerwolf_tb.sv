@@ -2,18 +2,20 @@
 //
 // PASTEL testbench for VeeRwolf (veerwolf_core with VeeR EL2).
 //
-// The single `clk` input is driven by the PASTEL Verilator main. Reset is
-// generated here. JTAG goes through pastel_jtag (OpenOCD remote_bitbang) and
+// A plain SystemVerilog top with no ports: clock and reset are generated
+// here. JTAG goes through pastel_jtag (OpenOCD remote_bitbang) and
 // VeeR's dmi_wrapper; RAM is an AXI RAM model with a PASTEL backdoor.
 
 `include "pastel_backdoor.svh"
 
 `default_nettype none
 
-module pastel_veerwolf_tb (
-  input logic clk
-);
+module pastel_veerwolf_tb;
   localparam int RAM_SIZE = 32'h10_0000;  // keep in step with the "ram" region
+
+  // --- Clock: 50 MHz ----------------------------------------------------------
+  logic clk;
+  pastel_clock u_clk (.clk(clk));
 
   // --- Reset: held for 16 cycles -------------------------------------------
   logic [4:0] rst_count = '0;

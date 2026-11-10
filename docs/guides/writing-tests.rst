@@ -187,9 +187,16 @@ around the part you care about, from the test or from firmware:
    boot_slowly();
    pastel_waves(1);
 
-Both return once the platform has made the change. Without ``--waves``, or on
-a platform that cannot dump waves, they do nothing, so a test only needs
-``requires("waves")`` if it is pointless without a waveform.
+Both return once the platform has made the change, and say whether waves are
+now being dumped. Without ``--waves``, or on a platform that cannot dump waves,
+they do nothing, so a test only needs ``requires("waves")`` if it is pointless
+without a waveform.
+
+.. note::
+
+   Verilator cannot pause a waveform: it ignores ``$dumpoff`` and ``$dumpon``.
+   On Verilator the calls above are accepted, return true, and ``sim.fst``
+   covers the whole run.
 
 Running tests
 -------------

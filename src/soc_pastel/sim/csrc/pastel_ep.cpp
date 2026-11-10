@@ -55,7 +55,7 @@ struct Pump {
   std::vector<std::pair<std::string, std::string>> info;  // HELLO "info" entries (JSON values)
   int64_t time_ns = 0;
   int platform_ep = -1;
-  bool waves_available = false, waves_on = false;
+  bool waves_pausable = false, waves_on = false;
 };
 
 Pump& pump() {
@@ -128,7 +128,7 @@ void handle_platform(const std::vector<uint8_t>& m) {
     for (int i = 0; i < 8; i++) b.push_back((uint64_t(p.time_ns) >> (8 * i)) & 0xFF);
     queue_frame(uint16_t(p.platform_ep), DATA, b.data(), b.size());
   } else if (m[0] == PF_SET_WAVES && m.size() >= 2) {
-    if (p.waves_available) p.waves_on = m[1] != 0;
+    if (p.waves_pausable) p.waves_on = m[1] != 0;
     const uint8_t b[] = {PF_WAVES, uint8_t(p.waves_on)};
     queue_frame(uint16_t(p.platform_ep), DATA, b, sizeof b);
   }
@@ -199,13 +199,6 @@ void receive() {
 void pastel_sim_info(const char* key, const char* json_value) {
   pump().info.emplace_back(key, json_value);
 }
-
-void pastel_sim_waves_init(bool on) {
-  pump().waves_available = true;
-  pump().waves_on = on;
-}
-
-bool pastel_sim_waves_on() { return pump().waves_on; }
 
 extern "C" {
 
@@ -322,6 +315,17 @@ int pastel_server_poll(long long time_ns) {
   if (p.lost) return 2;
   return 0;
 }
+
+// Waves. pastel_server calls _init once it has opened a waveform file and is
+// dumping. If the simulator can pause dumping, the host's SET_WAVES requests
+// then set the state that _waves_on reports, and pastel_server follows it;
+// otherwise dumping stays on and SET_WAVES is answered with "still on".
+void pastel_server_waves_init(int can_pause) {
+  pump().waves_pausable = can_pause != 0;
+  pump().waves_on = true;
+}
+
+int pastel_server_waves_on(void) { return pump().waves_on; }
 
 void pastel_server_close(void) {
   Pump& p = pump();

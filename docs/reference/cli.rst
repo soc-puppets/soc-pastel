@@ -90,7 +90,7 @@ Set by PASTEL; listed for running a model by hand.
    * - ``+pastel_jtag_port=<n>``
      - JTAG server port (default: any free port, reported in HELLO)
    * - ``+pastel_clk_period_ps=<n>``
-     - Clock period (default 20000, i.e. 50 MHz)
+     - Clock period of ``pastel_clock`` (default 20000, i.e. 50 MHz)
    * - ``+pastel_waves=<file>``
      - Dump an FST waveform to ``<file>``. Needs a model built with waves
        (an image whose name ends in ``-waves``).

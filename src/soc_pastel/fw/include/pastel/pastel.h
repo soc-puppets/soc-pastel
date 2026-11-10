@@ -21,8 +21,9 @@ void pastel_puts(const char *s);
 void pastel_send(const void *data, uint8_t length);
 
 // Turn waveform dumping on (nonzero) or off (0), and wait until the platform
-// has done so. Returns 1 if waves are now being dumped; always 0 on a platform
-// that cannot dump waves or was not asked to (pytest --waves).
+// has done so. Returns 1 if waves are now being dumped: always 0 on a platform
+// that cannot dump waves or was not asked to (pytest --waves), and always 1 on
+// a simulator that cannot pause dumping (Verilator).
 int pastel_waves(int enable);
 
 // Memory-mapped register helpers.
