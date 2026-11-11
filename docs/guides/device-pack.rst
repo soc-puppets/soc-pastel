@@ -407,10 +407,24 @@ If your flow already has a file list, the hook can be a few lines:
 
 Arguments are file paths (absolute), ``+incdir+<dir>``, ``-D<name>[=<value>]``,
 and simulator-specific configuration files such as Verilator's ``.vlt``,
-which other simulators ignore. ``workdir`` is yours to use for any
-set-up, such as generating files. VeeRwolf's hook uses it to let FuseSoC
-generate the VeeR configuration and resolve dependencies; see
-``soc_pastel_veerwolf/sim.py``.
+which other simulators ignore. Arguments for one simulator only go in
+``tool_args``, keyed by platform name, e.g.
+``tool_args={"verilator": ("-CFLAGS", "-fcoroutines")}``.
+
+``workdir`` is yours to use for any set-up, such as generating files.
+VeeRwolf's hook uses it to let FuseSoC generate the VeeR configuration and
+resolve dependencies; see ``soc_pastel_veerwolf/sim.py``.
+
+If the sources differ between simulators, for example a behavioural model
+that only one simulator can compile, give the hook a ``platform`` keyword
+argument. PASTEL then passes the platform's name, so one variant serves every
+simulator:
+
+.. code-block:: python
+
+   def sim_sources(workdir: Path, platform: str = "verilator") -> SimSources:
+       flags = ["--flag=behavioural_models"] if platform == "verilator" else []
+       ...
 
 The model is rebuilt only when a listed file's content changes (ignoring
 comment-only lines, which generators often timestamp). ``key`` adds anything

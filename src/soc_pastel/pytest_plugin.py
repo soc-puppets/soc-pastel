@@ -97,7 +97,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Register PASTEL's markers."""
+    """Register PASTEL's markers and the waveform summary."""
+    config.pluginmanager.register(_Waveforms(), "soc-pastel-waveforms")
     config.addinivalue_line(
         "markers",
         "requires(*capabilities): skip unless the harness offers every capability "
@@ -155,17 +156,50 @@ def build_harness(config: pytest.Config, device: Device, run_dir: Path) -> Platf
 def harness(
     request: pytest.FixtureRequest, pastel_device: Device, tmp_path: Path
 ) -> Iterator[PlatformHarness]:
-    """An open harness for one test; skips the test if its requirements are unmet.
+    """The harness for one test; skips the test if its requirements are unmet.
 
-    Simulator and debugger logs are written to the test's ``tmp_path``.
+    The platform starts when the test first uses the target (see
+    :class:`~soc_pastel.core.harness.PlatformHarness`), and stops after the
+    test. Simulator and debugger logs are written to the test's ``tmp_path``.
     """
     h = build_harness(request.config, pastel_device, tmp_path)
     for marker in request.node.iter_markers("requires"):
         missing = sorted(set(marker.args) - h.capabilities)
         if missing:
             pytest.skip(f"requires {', '.join(missing)}")
-    with h:
+    try:
         yield h
+    finally:
+        h.close()
+        waves = h.platform.waves_path  # closed: never starts the platform
+        if waves is not None and waves.exists():
+            request.node.user_properties.append((_WAVES_PROPERTY, str(waves)))
+
+
+_WAVES_PROPERTY = "pastel_waves"
+
+
+class _Waveforms:
+    """Lists where each test's waveform went, at the end of the run.
+
+    Paths travel in the teardown report's ``user_properties``, so this works
+    under pytest-xdist too.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str]] = []
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.when == "teardown":
+            self.seen += [
+                (report.nodeid, v) for k, v in report.user_properties if k == _WAVES_PROPERTY
+            ]
+
+    def pytest_terminal_summary(self, terminalreporter: Any) -> None:
+        if self.seen:
+            terminalreporter.write_sep("-", "waveforms")
+            for nodeid, path in self.seen:
+                terminalreporter.write_line(f"{nodeid}: {path}")
 
 
 class Firmware:

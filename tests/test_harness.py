@@ -167,6 +167,58 @@ def test_lifecycle_order():
     assert EVENTS == ["start", "open ocd", "open spi0", "close spi0", "close ocd", "stop"]
 
 
+def test_platform_starts_on_first_use_not_before():
+    EVENTS.clear()
+    h = make(spi0=(FakeSpi, {"impl": "fake"}))
+    assert h.has("spi0", "backdoor") and h.device is DEVICE and h.variant.name == "v"
+    h.require("on_chip_debug")
+    assert EVENTS == []  # capabilities, device and variant don't need the target
+    h.ocd.halt()
+    assert EVENTS == ["start", "open ocd", "open spi0"]
+    _ = h.platform, h.memory()
+    assert EVENTS == ["start", "open ocd", "open spi0"]  # once only
+    h.close()
+    assert EVENTS[-2:] == ["close ocd", "stop"]
+
+
+@pytest.mark.parametrize("first_use", ["platform", "iface", "memory"])
+def test_each_entry_point_opens(first_use):
+    EVENTS.clear()
+    h = make()
+    {"platform": lambda: h.platform, "iface": lambda: h.iface("on_chip_debug"), "memory": h.memory}[
+        first_use
+    ]()
+    assert EVENTS == ["start", "open ocd"]
+    h.close()
+
+
+def test_never_used_harness_never_starts_or_stops():
+    EVENTS.clear()
+    h = make()
+    h.close()
+    h.close()
+    assert EVENTS == []
+    _ = h.platform  # a closed harness doesn't come back to life
+    assert EVENTS == []
+
+
+def test_failed_open_is_not_retried():
+    class Boom(FakePlatform):
+        def start(self):
+            EVENTS.append("start")
+            raise RuntimeError("no licence")
+
+    EVENTS.clear()
+    v = DEVICE.variant()
+    h = PlatformHarness(
+        DEVICE, v, Boom(DEVICE, v, {}), {"on_chip_debug": (FakeOcd, {"impl": "fake"})}
+    )
+    with pytest.raises(RuntimeError, match="licence"):
+        _ = h.ocd
+    _ = h.ocd  # the test goes on to fail on its own terms, without a second start
+    assert EVENTS == ["start", "stop"]
+
+
 def test_memory_prefers_backdoor():
     h = make()
     assert h.memory() is FakePlatform.backdoor_mem

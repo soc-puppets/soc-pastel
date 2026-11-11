@@ -170,7 +170,7 @@ The simulator writes a waveform covering the whole testbench, in its own
 format, next to ``sim.log`` in each test's temporary directory (``sim.fst``
 with Verilator). Where tracing has to be compiled in, as with Verilator, the
 first run with ``--waves`` builds a second, slower model; runs without it keep
-using the fast one.
+using the fast one. The end of the run lists each test's waveform.
 
 Dumping starts at time 0. To keep a waveform small, turn dumping off and on
 around the part you care about, from the test or from firmware:

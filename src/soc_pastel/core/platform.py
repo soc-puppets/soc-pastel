@@ -166,6 +166,11 @@ class Platform(ABC):
         """
         return False
 
+    @property
+    def waves_path(self) -> Path | None:
+        """Where this run's waveform is written, or None if it dumps none."""
+        return None
+
     def debug_connection(self) -> Mapping[str, Any]:
         """How on-chip debug reaches the target on this platform.
 

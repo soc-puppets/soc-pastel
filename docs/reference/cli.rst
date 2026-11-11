@@ -48,6 +48,11 @@ Verilator platform (``--platform=verilator``):
      - Where Verilator models are built (default ``.pastel/verilator``).
    * - ``--verilator=<exe>``
      - The Verilator executable.
+   * - ``--verilator-args=<args>``
+     - Extra Verilator arguments, as one shell-quoted string, e.g.
+       ``"-CFLAGS -fcoroutines -LDFLAGS -Wl,-rpath,/opt/gcc/lib64"``. They
+       are part of the model's identity, so changing them builds a new
+       model.
 
 Markers
 -------
@@ -60,7 +65,10 @@ Fixtures
 --------
 
 ``harness``
-   An open :py:class:`~soc_pastel.core.harness.PlatformHarness`, per test.
+   A :py:class:`~soc_pastel.core.harness.PlatformHarness`, per test. The
+   platform starts when the test first uses the target, not before, so a test
+   that fails or skips first (a firmware compile error, say) starts no
+   simulator.
 ``firmware``
    Builds and runs firmware on that harness; sources are relative to the test
    file.

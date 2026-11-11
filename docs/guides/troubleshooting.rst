@@ -40,6 +40,23 @@ finding it. Install LZ4, and where it lives outside the default search path
 (Homebrew on Apple silicon), point the compiler at it:
 ``export CPATH=/opt/homebrew/include LIBRARY_PATH=/opt/homebrew/lib``.
 
+**``Verilator exited successfully but ... does not exist``.**
+The build ran somewhere else (for example on a farm node, through a wrapper
+given as ``--verilator``) and this machine's network file system hasn't seen
+the model yet. PASTEL waits 30 seconds for it. Check the build machine wrote it
+to the same path.
+
+**The model doesn't rebuild after a toolchain change.**
+The model's identity covers its sources, ``--verilator-args``, the
+resolved ``verilator`` path and the compiler variables (``CXX``, ``CC``,
+``CXXFLAGS``, ``CFLAGS``, ``CPPFLAGS``, ``LDFLAGS``, ``VERILATOR_ROOT``).
+It can't see a new Verilator or compiler installed in place under the same
+path. Use another ``--verilator-workdir``, or delete the image directory.
+
+**``pastel: sidecar ... still running ... after finish was requested; killing it`` in ``sim.log``.**
+OpenOCD didn't exit when the test ended, so each test waits about 5 seconds
+before the simulator kills it. Check ``openocd.log`` for what it was doing.
+
 **The model rebuilds on every run.**
 A listed file changes between runs in more than comments. Make the generating
 step deterministic, or do it once and reuse the output (VeeRwolf's hook keeps

@@ -324,6 +324,9 @@ void stop_sidecars() {
     // waited for: with the simulation stopped, it may be stuck on JTAG.
     int status;
     if (waitpid(sc.pid, &status, WNOHANG) == 0) {
+      double waited = pump().finish_deadline ? now_s() - (pump().finish_deadline - 5.0) : 0;
+      fprintf(stderr, "pastel: sidecar %s still running %.1f s after finish was requested; killing it\n",
+              sc.name.c_str(), waited);
       kill(sc.pid, SIGKILL);
       waitpid(sc.pid, &status, 0);
     }
