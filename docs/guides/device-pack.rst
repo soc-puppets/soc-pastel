@@ -366,6 +366,22 @@ For a memory with ECC, recompute the check bits for the affected word in
 deliberate blocking writes (Verilator's ``BLKSEQ``, for one); PASTEL's builds
 don't enable those warnings.
 
+Portable SystemVerilog
+~~~~~~~~~~~~~~~~~~~~~~
+
+Write the testbench, and any VIPs, so that every simulator can compile them,
+not only the one you use today. Simulators differ in which legal
+SystemVerilog they accept, and errors inside macros are usually reported at
+the call site, which makes them hard to trace. Constructs known to cause
+trouble:
+
+- **Assignments inside expressions.** ``while ((n = f()) >= 13)`` is legal,
+  but Xcelium rejects it (``EXPRPA``, expecting a right parenthesis). Assign
+  first, then test: ``n = f(); while (n >= 13) begin ... n = f(); end``.
+
+PASTEL's own HDL is checked for these by its unit tests
+(``tests/test_hdl_portability.py``).
+
 .. _step-4-tell-pastel-how-to-build-it:
 
 Step 4: tell PASTEL how to build it
