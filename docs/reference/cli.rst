@@ -20,10 +20,6 @@ pytest options
    * - ``--waves``
      - Dump waveforms from the start of each test, on platforms that can
        (see :ref:`waves`).
-   * - ``--verilator-workdir=<dir>``
-     - Where Verilator models are built (default ``.pastel/verilator``).
-   * - ``--verilator=<exe>``
-     - The Verilator executable.
    * - ``--sim-launcher=<template>``
      - Run the simulator through a command: a prefix (``srun -p sim``) or a
        template with ``{cmd}`` (``ssh simbox {cmd}``). See
@@ -37,6 +33,21 @@ pytest options
    * - ``--sim-connect-timeout=<seconds>``
      - How long to wait for the simulator to connect (default 120, or 3600
        with a launcher).
+
+The ``--sim-*`` options apply to every simulation platform. Each platform
+also adds options of its own.
+
+Verilator platform (``--platform=verilator``):
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--verilator-workdir=<dir>``
+     - Where Verilator models are built (default ``.pastel/verilator``).
+   * - ``--verilator=<exe>``
+     - The Verilator executable.
 
 Markers
 -------
@@ -91,7 +102,8 @@ Environment variables
 Simulator plusargs
 ------------------
 
-Set by PASTEL; listed for running a model by hand.
+Set by PASTEL; listed for running a model by hand. They are read with
+``$value$plusargs``, so they work the same on any simulator.
 
 .. list-table::
    :header-rows: 1
@@ -112,8 +124,11 @@ Set by PASTEL; listed for running a model by hand.
    * - ``+pastel_clk_period_ps=<n>``
      - Clock period of ``pastel_clock`` (default 20000, i.e. 50 MHz)
    * - ``+pastel_waves=<file>``
-     - Dump an FST waveform to ``<file>``. Needs a model built with waves
-       (an image whose name ends in ``-waves``).
+     - Dump a waveform of the whole testbench to ``<file>``, in the
+       simulator's own format. Needs a model compiled with
+       ``+define+PASTEL_WAVES`` and the simulator's tracing option. With
+       Verilator, that is the image whose name ends in ``-waves``, which
+       writes FST.
 
 Entry-point groups
 ------------------

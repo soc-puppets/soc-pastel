@@ -362,9 +362,9 @@ rest. This one serves a RAM split into two banks interleaved by 32-bit word:
    endmodule
 
 For a memory with ECC, recompute the check bits for the affected word in
-``pastel_bd_write``. Use one backdoor per module. Verilator's ``-Wall`` reports
-the deliberate blocking writes (``BLKSEQ``); PASTEL's build does not enable
-those warnings.
+``pastel_bd_write``. Use one backdoor per module. Lint tools may flag the
+deliberate blocking writes (Verilator's ``BLKSEQ``, for one); PASTEL's builds
+don't enable those warnings.
 
 .. _step-4-tell-pastel-how-to-build-it:
 
@@ -373,8 +373,9 @@ Step 4: tell PASTEL how to build it
 
 The variant's ``sim_sources`` parameter names a function returning a
 :py:class:`~soc_pastel.sim.sources.SimSources`: the testbench top and the
-arguments that compile it. PASTEL adds its own HDL and C++, then builds with
-Verilator.
+arguments that compile it. PASTEL adds its own HDL and C++, then compiles
+everything with the simulator the platform uses. Keep the arguments
+simulator-neutral, so the same hook serves every simulation platform.
 
 If your flow already has a file list, the hook can be a few lines:
 
@@ -405,7 +406,8 @@ If your flow already has a file list, the hook can be a few lines:
        return SimSources(top="my_chip_tb", args=tuple(args))
 
 Arguments are file paths (absolute), ``+incdir+<dir>``, ``-D<name>[=<value>]``,
-and Verilator configuration files (``.vlt``). ``workdir`` is yours to use for any
+and simulator-specific configuration files such as Verilator's ``.vlt``,
+which other simulators ignore. ``workdir`` is yours to use for any
 set-up, such as generating files. VeeRwolf's hook uses it to let FuseSoC
 generate the VeeR configuration and resolve dependencies; see
 ``soc_pastel_veerwolf/sim.py``.
@@ -422,7 +424,8 @@ else that should force a rebuild, such as an upstream commit.
 
       pytest --pyargs soc_pastel.conformance -k test_debug --device=my_chip --platform=verilator
 
-   The first run builds the model; its log is
+   The first run builds the model. Its log is ``build.log`` in the platform's
+   build directory; for Verilator,
    ``.pastel/verilator/images/<top>-<hash>/build.log``. Then, in order:
 
    1. The simulator connects and its endpoints match the descriptor. A mismatch

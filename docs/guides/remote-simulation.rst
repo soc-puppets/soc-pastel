@@ -20,7 +20,7 @@ carries traffic.
 
    test machine                         simulation machine
    ┌──────────────────────┐            ┌─────────────────────────────────┐
-   │ pytest               │  one TCP   │ simulator (Vsim)                │
+   │ pytest               │  one TCP   │ simulator                       │
    │  └ endpoint session ◄├────────────┤  ├ endpoint pump ──┐ stdin/out  │
    │     ├ backdoor, VIPs │ connection │  │                 ▼            │
    │     └ OpenOCD Tcl    │ (outbound  │  │       OpenOCD (sidecar)      │
@@ -83,8 +83,9 @@ Requirements
 
 **A shared file system.** The model is built on the test machine and run
 from the same absolute path on the remote one. The simulator also runs in the
-test's run directory, where it writes its waveform. Put both on a file system
-the machines share:
+test's run directory, where it writes its waveform. Put both the platform's
+build directory and the run directory on a file system the machines share.
+For example, with Verilator:
 
 .. code-block:: console
 
@@ -97,8 +98,10 @@ pytest's default ``/tmp/pytest-of-$USER`` is usually local to each machine.
 In that case the ``{cmd}`` form fails with a ``cd`` error in ``sim.log``, and
 ``srun`` warns that it couldn't change directory.
 
-**Compatible machines.** The Verilator model is a native executable, so the
-remote machine needs the same architecture and compatible system libraries.
+**Compatible machines.** A compiled model is usually a native executable
+(Verilator's is), so the remote machine needs the same architecture and
+compatible system libraries. A commercial simulator must also be installed at
+the same path on the remote machine, with access to its licence server.
 
 **OpenOCD on the simulation machine.** OpenOCD runs where the simulator
 does, so it must be on that machine's ``PATH``, or at the path given by

@@ -164,11 +164,13 @@ Run with ``--waves`` to dump waveforms on platforms that can:
 
 .. code-block:: shell
 
-   pytest tests/ --device=<device> --platform=verilator --waves
+   pytest tests/ --device=<device> --platform=<platform> --waves
 
-Verilator writes ``sim.fst``, covering the whole testbench, next to
-``sim.log`` in each test's temporary directory. The first run with ``--waves``
-builds a second, slower model; runs without it keep using the fast one.
+The simulator writes a waveform covering the whole testbench, in its own
+format, next to ``sim.log`` in each test's temporary directory (``sim.fst``
+with Verilator). Where tracing has to be compiled in, as with Verilator, the
+first run with ``--waves`` builds a second, slower model; runs without it keep
+using the fast one.
 
 Dumping starts at time 0. To keep a waveform small, turn dumping off and on
 around the part you care about, from the test or from firmware:
@@ -194,9 +196,9 @@ without a waveform.
 
 .. note::
 
-   Verilator cannot pause a waveform: it ignores ``$dumpoff`` and ``$dumpon``.
-   On Verilator the calls above are accepted, return true, and ``sim.fst``
-   covers the whole run.
+   Not every simulator can pause a waveform. Verilator ignores ``$dumpoff``
+   and ``$dumpon``, so on Verilator the calls above are accepted and return
+   true, and the waveform covers the whole run.
 
 Running tests
 -------------
