@@ -115,7 +115,7 @@ class OpenOcd(OnChipDebug):
     the simulator starts it beside itself, on whichever machine it runs.
     ``remote_bitbang`` then reaches the testbench's JTAG server over a Unix
     socket on that machine, and OpenOCD serves Tcl on its stdin and stdout
-    (``tcl port pipe``), which the simulator relays over its connection to the
+    (``tcl_port pipe``), which the simulator relays over its connection to the
     test process. Only Tcl commands and replies cross the network, and
     OpenOCD opens no ports. The OpenOCD executable must exist on the
     simulation machine.
@@ -175,10 +175,12 @@ class OpenOcd(OnChipDebug):
             transport=transport,
             chain=self.config["chain"],
             cpu=_fragment("cpu", self.config["cpu"]),
+            # The underscore spellings: newer OpenOCD keeps them as aliases, and
+            # older builds (some RISC-V forks) have no `gdb port` form at all.
             extra=[
-                "gdb port disabled",
-                "telnet port disabled",
-                f"tcl port {'pipe' if tcl_port is None else tcl_port}",
+                "gdb_port disabled",
+                "telnet_port disabled",
+                f"tcl_port {'pipe' if tcl_port is None else tcl_port}",
                 "init",
             ],
         ).render()

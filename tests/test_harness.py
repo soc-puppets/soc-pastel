@@ -256,5 +256,6 @@ def test_sim_platform_given_interface_sidecars_before_start(tmp_path):
     ocd = FakeSim.sidecars_seen[0]
     assert ocd.argv[1:] == ("-f", "openocd.cfg") and ocd.log == "openocd.log"
     cfg = (tmp_path / "openocd.cfg").read_text()
-    assert "tcl port pipe" in cfg
+    assert "tcl_port pipe" in cfg
+    assert "gdb_port disabled" in cfg and "telnet_port disabled" in cfg
     assert "remote_bitbang host $::env(PASTEL_JTAG_SOCKET)" in cfg
