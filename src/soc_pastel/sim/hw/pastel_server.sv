@@ -13,9 +13,12 @@
 //                                     to <file> from time 0. Needs a model
 //                                     compiled with +define+PASTEL_WAVES and
 //                                     the simulator's own tracing option.
-//                                     Xcelium records an SHM database
-//                                     ($recordfile); other simulators use
-//                                     $dumpfile (VCD, or FST with Verilator).
+//                                     Xcelium records a SimVision database
+//                                     ($recordfile: SST2, <base>.trn and
+//                                     <base>.dsn, choosing the suffixes
+//                                     itself, so name the .trn file); other
+//                                     simulators use $dumpfile (VCD, or FST
+//                                     with Verilator).
 //
 // It connects on the first clock edge, after every VIP has opened its
 // endpoint at time 0, so HELLO lists them all. It then polls every
@@ -63,8 +66,9 @@ module pastel_server #(
   initial begin
     if ($value$plusargs("pastel_waves=%s", waves_file)) begin
 `ifdef XCELIUM
-      // SHM rather than VCD: far smaller and faster for a whole SoC, and what
-      // SimVision reads. No arguments: the whole design, as with $dumpvars.
+      // A SimVision database (SST2: .trn and .dsn) rather than VCD: far smaller
+      // and faster for a whole SoC. Open it with `simvision <base>.trn`.
+      // No arguments: the whole design, as with $dumpvars.
       $recordfile(waves_file);
       $recordvars;
 `else
