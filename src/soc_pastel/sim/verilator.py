@@ -55,6 +55,19 @@ def _content_key(path: Path) -> bytes:
     return b"\n".join(ln for ln in lines if not ln.lstrip().startswith((b"//", b"#")))
 
 
+#: Files in include directories that can change a model without being listed.
+HEADER_SUFFIXES = frozenset({".svh", ".vh", ".h", ".hpp", ".hh", ".inc"})
+
+
+def _headers(dirs: list[Path]) -> list[Path]:
+    """Header files directly inside each include directory, in a stable order."""
+    found: list[Path] = []
+    for d in dict.fromkeys(dirs):  # unique, in order
+        if d.is_dir():
+            found += sorted(f for f in d.iterdir() if f.suffix in HEADER_SUFFIXES and f.is_file())
+    return found
+
+
 class VerilatorImage(PlatformImage):
     """A Verilator model of a device variant's testbench.
 
@@ -65,6 +78,7 @@ class VerilatorImage(PlatformImage):
     (its key ends in ``-waves``) built only when waves are asked for.
 
     The key covers the sources (by content), PASTEL's own HDL and C++, the
+    headers in every include directory (``+incdir+``, by content), the
     extra Verilator arguments, which ``verilator`` runs (by resolved path)
     and the compiler environment (:data:`TOOL_ENV`). It can't see a
     different Verilator installed at the same path; use another
@@ -97,6 +111,11 @@ class VerilatorImage(PlatformImage):
             p = Path(arg)
             if not arg.startswith(("+", "-")) and p.is_file():
                 h.update(_content_key(p))
+        incdirs = [SIM_HW, SIM_CSRC, OCD_HW]
+        incdirs += [Path(a[len("+incdir+") :]) for a in sources.args if a.startswith("+incdir+")]
+        for header in _headers(incdirs):
+            h.update(str(header).encode())
+            h.update(_content_key(header))
         tool = [
             "args",
             *self.extra_args,

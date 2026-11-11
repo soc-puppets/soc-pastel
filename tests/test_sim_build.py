@@ -25,6 +25,21 @@ def test_key_covers_extra_args_from_option_and_sources(tmp_path):
     assert key(tmp_path, other_tool) == base  # another simulator's args don't apply
 
 
+def test_key_covers_headers_in_include_directories(tmp_path):
+    inc = tmp_path / "inc"
+    inc.mkdir()
+    (inc / "defs.svh").write_text("`define WIDTH 8\n")
+    (inc / "notes.txt").write_text("not a header\n")
+    sources = SimSources(top="tb", args=(f"+incdir+{inc}",))
+    base = key(tmp_path, sources)
+    (inc / "notes.txt").write_text("changed, but not a header\n")
+    assert key(tmp_path, sources) == base
+    (inc / "defs.svh").write_text("// a comment-only change is ignored\n`define WIDTH 8\n")
+    assert key(tmp_path, sources) == base
+    (inc / "defs.svh").write_text("`define WIDTH 16\n")
+    assert key(tmp_path, sources) != base
+
+
 def test_key_covers_verilator_and_compiler_environment(tmp_path, monkeypatch):
     base = key(tmp_path)
     assert key(tmp_path, verilator="/opt/verilator/v5.042/bin/verilator") != base
