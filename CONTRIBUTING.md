@@ -35,6 +35,14 @@ Constructs to avoid:
         n = f();
       end
 
-`tests/test_hdl_portability.py` checks the HDL in this repository for these.
+- **Relying on 2-state start-up values.** Verilator is a 2-state simulator,
+  so a signal nothing has driven or reset reads as 0 there, but as X in a
+  4-state simulator. Give everything PASTEL drives into the design a defined
+  value from time 0. For example, `pastel_jtag` holds TRST asserted until
+  OpenOCD releases it, as lowRISC's jtagdpi does. A TAP that only TRST resets
+  (VeeR's, for one) then starts in reset rather than X.
+
+`tests/test_hdl_portability.py` checks the HDL in this repository for the
+first of these.
 Add to this list, and to the check where it can be automated, when a
 simulator turns out to reject something PASTEL uses.

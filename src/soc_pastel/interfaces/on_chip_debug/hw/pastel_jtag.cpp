@@ -38,7 +38,10 @@ struct Jtag {
   int listen_fd = -1, fd = -1;
   unsigned char buf[4096];
   int len = 0, pos = 0;
-  svBit tck = 0, tms = 0, tdi = 0, trst_n = 1;
+  // TRST starts asserted, as in lowRISC's jtagdpi: a TAP reset only by TRST
+  // (VeeR's rvjtag_tap, for one) is then in a known state before OpenOCD
+  // connects, rather than X in a 4-state simulator. OpenOCD releases it.
+  svBit tck = 0, tms = 0, tdi = 0, trst_n = 0;
   std::string dir, path;  // Unix socket, removed at exit
 };
 Jtag j;
