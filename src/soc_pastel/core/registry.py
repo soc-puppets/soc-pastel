@@ -10,6 +10,7 @@ Group                       Entry-point name                Value
 ``soc_pastel.platforms``    platform name                   a ``Platform`` subclass
 ``soc_pastel.interfaces``   ``"<type>/<impl>"``             an ``Interface`` subclass
 ``soc_pastel.hdl``          pack name                       a ``Path`` to FuseSoC cores
+``soc_pastel.launchers``    launcher name                   a ``SimLauncher`` subclass
 ==========================  ==============================  =======================
 
 Host-side endpoint handlers are not registered separately: a simulation
@@ -34,6 +35,7 @@ DEVICES = "soc_pastel.devices"
 PLATFORMS = "soc_pastel.platforms"
 INTERFACES = "soc_pastel.interfaces"
 HDL = "soc_pastel.hdl"
+LAUNCHERS = "soc_pastel.launchers"
 
 
 def _group(group: str) -> dict[str, EntryPoint]:
@@ -90,6 +92,15 @@ def interface(type_name: str, impl: str) -> type[Interface]:
     if cls.type_name != type_name:
         raise ConfigurationError(f"{type_name}/{impl} implements {cls.type_name!r}")
     return cls
+
+
+def launcher(name: str) -> type:
+    """Load the simulator launcher class called ``name``.
+
+    The caller checks it is a :class:`~soc_pastel.sim.launch.SimLauncher`
+    (``core`` does not depend on ``sim``).
+    """
+    return _load(LAUNCHERS, name, "sim launcher")
 
 
 def hdl_roots() -> dict[str, Path]:

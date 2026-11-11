@@ -50,7 +50,21 @@ Connecting
 ----------
 
 **``simulator exited before connecting``.**
-The simulator died during elaboration or its first cycles; see ``sim.log``.
+The simulator died during elaboration or its first cycles, or a launcher
+failed (unknown host, job refused, missing run directory). The error shows the
+end of ``sim.log``. A launcher that returns once the job is queued (``sbatch``,
+plain ``qsub``) also gives this error; see :doc:`remote-simulation`.
+
+**``simulator did not connect within ... s``.**
+With a launcher, the job may still be queued (raise
+``--sim-connect-timeout``), or the remote machine can't reach the test
+machine. ``sim.log`` shows ``pastel: cannot connect to <host> (<ip>) ...`` for
+each address it tried. Pass ``--sim-host-address`` with a name or IP the farm
+can reach, and check that firewalls allow inbound TCP to the test machine.
+
+**``ignored a connection from ...`` in the log.**
+Something other than the simulator connected to the test process's port.
+PASTEL ignores it and keeps waiting.
 
 **``testbench and descriptor disagree``.**
 The testbench's endpoints don't match the descriptor. Every disagreement is

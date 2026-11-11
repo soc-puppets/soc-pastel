@@ -92,9 +92,12 @@ control). Endpoints exchange opaque byte messages; a small C++ pump inside the
 simulator moves them, and all interpretation happens in the test process. No
 Python runs inside the simulator.
 
-OpenOCD runs beside the simulator and talks JTAG to the testbench's
-``pastel_jtag`` over OpenOCD's ``remote_bitbang`` protocol. Only Tcl commands
-cross between OpenOCD and the test process.
+OpenOCD runs beside the test process and talks JTAG to the testbench's
+``pastel_jtag`` over OpenOCD's ``remote_bitbang`` protocol.
+
+The simulator need not run on the test machine. A launcher (``srun``,
+``ssh``, or a plugin) can start it anywhere that can phone home over TCP. See
+:doc:`guides/remote-simulation`.
 
 Loading firmware over simulated JTAG is slow (seconds per kilobyte), so
 regions with a backdoor are loaded through it instead (milliseconds). Debug

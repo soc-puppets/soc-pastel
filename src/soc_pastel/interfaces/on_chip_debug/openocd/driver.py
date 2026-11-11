@@ -52,8 +52,12 @@ class OpenOcd(OnChipDebug):
       or ``openocd``.
     - ``startup_timeout_s``: how long to wait for OpenOCD to examine the target.
 
-    In simulation, OpenOCD runs beside the simulator so the chatty bitbang
-    link stays local; only Tcl commands cross to the test process.
+    OpenOCD runs beside the test process and is driven over a local Tcl
+    port. In simulation it reaches the testbench's bitbang server wherever
+    the simulator runs (see :meth:`VerilatorPlatform.debug_connection
+    <soc_pastel.sim.verilator.VerilatorPlatform.debug_connection>`); with a
+    remote simulator that chatty link crosses the network, so prefer the
+    backdoor for bulk memory access.
     """
 
     impl_name: ClassVar[str] = "openocd"

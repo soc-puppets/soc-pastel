@@ -44,6 +44,32 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help="Dump waveforms from the start of each test, on platforms that can.",
     )
+    sim = parser.getgroup("soc-pastel simulation")
+    sim.addoption(
+        "--sim-launcher",
+        metavar="TEMPLATE",
+        help="Run the simulator through this command, e.g. 'srun -p sim' (the model's "
+        "command line is appended) or 'ssh simhost {cmd}' ({cmd} becomes a shell command).",
+    )
+    sim.addoption(
+        "--sim-launcher-class",
+        metavar="NAME",
+        help="Run the simulator with a SimLauncher plugin: a 'soc_pastel.launchers' "
+        "entry-point name or 'module:Class'.",
+    )
+    sim.addoption(
+        "--sim-host-address",
+        metavar="ADDR",
+        help="Address a remote simulator dials to reach this machine "
+        "(default: this machine's fully qualified host name).",
+    )
+    sim.addoption(
+        "--sim-connect-timeout",
+        type=float,
+        metavar="SECONDS",
+        help="How long to wait for the simulator to connect "
+        "(default 120, or 3600 with a launcher, to allow for queueing).",
+    )
     for name in registry.platform_names():
         try:
             registry.platform(name).add_options(parser)

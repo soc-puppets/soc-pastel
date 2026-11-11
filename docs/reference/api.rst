@@ -70,6 +70,10 @@ Simulation
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.sim.launch
+   :members:
+   :show-inheritance:
+
 .. automodule:: soc_pastel.sim.verilator
    :members:
    :show-inheritance:

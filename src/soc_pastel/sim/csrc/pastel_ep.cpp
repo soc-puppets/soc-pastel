@@ -18,6 +18,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -194,6 +195,82 @@ void receive() {
   p.in.erase(p.in.begin(), p.in.begin() + off);
 }
 
+// Connect to one resolved address, giving up after timeout_ms. Returns the
+// socket (blocking) or -1 with errno set.
+int connect_with_timeout(const addrinfo* ai, int timeout_ms) {
+  int fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+  if (fd < 0) return -1;
+  int flags = fcntl(fd, F_GETFL);
+  fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  int rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
+  if (rc != 0 && errno == EINPROGRESS) {
+    pollfd pfd{fd, POLLOUT, 0};
+    rc = poll(&pfd, 1, timeout_ms);
+    if (rc == 0) {
+      errno = ETIMEDOUT;
+      rc = -1;
+    } else if (rc > 0) {
+      int err = 0;
+      socklen_t len = sizeof err;
+      getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+      errno = err;
+      rc = err ? -1 : 0;
+    }
+  }
+  if (rc != 0) {
+    int saved = errno;
+    close(fd);
+    errno = saved;
+    return -1;
+  }
+  fcntl(fd, F_SETFL, flags);
+  return fd;
+}
+
+void tune_socket(int fd) {
+  int one = 1;
+  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+  // Keepalives, so an idle connection through a firewall or NAT survives a
+  // long stretch of simulation with no endpoint traffic.
+  setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof one);
+#ifdef TCP_KEEPIDLE
+  int idle = 60, intvl = 15, cnt = 8;
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof idle);
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof intvl);
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof cnt);
+#endif
+}
+
+// Dial the host, trying every address it resolves to (IPv6 and IPv4), and
+// retrying for a while in case the network or DNS is briefly unavailable.
+int dial(const std::string& host, const std::string& port) {
+  constexpr int kAttempts = 10, kTimeoutMs = 5000, kRetryDelayUs = 1000000;
+  for (int attempt = 1; attempt <= kAttempts; attempt++) {
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    int gai = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+    if (gai != 0) {
+      fprintf(stderr, "pastel: cannot resolve host %s: %s\n", host.c_str(), gai_strerror(gai));
+    } else {
+      for (addrinfo* ai = res; ai; ai = ai->ai_next) {
+        int fd = connect_with_timeout(ai, kTimeoutMs);
+        if (fd >= 0) {
+          freeaddrinfo(res);
+          return fd;
+        }
+        char addr[NI_MAXHOST] = "?";
+        getnameinfo(ai->ai_addr, ai->ai_addrlen, addr, sizeof addr, nullptr, 0, NI_NUMERICHOST);
+        fprintf(stderr, "pastel: cannot connect to %s (%s) port %s: %s\n", host.c_str(), addr,
+                port.c_str(), strerror(errno));
+      }
+      freeaddrinfo(res);
+    }
+    if (attempt < kAttempts) usleep(kRetryDelayUs);
+  }
+  return -1;
+}
+
 }  // namespace
 
 void pastel_sim_info(const char* key, const char* json_value) {
@@ -248,39 +325,34 @@ void pastel_ep_tx_end(int h) {
   flush();
 }
 
-// Connect to the host given as "<ip>:<port>:<token>" and send HELLO.
-// Returns 0 on success, -1 on failure. An empty spec means "no host".
+// Connect to the host given as "<host>:<port>:<token>" and send HELLO.
+// <host> is a name, an IPv4 address or a bracketed IPv6 address
+// ("[fd00::1]"). Returns 0 on success, -1 on failure. An empty spec means
+// "no host".
 int pastel_server_connect(const char* spec) {
   Pump& p = pump();
   if (!spec || !*spec) return 0;
   std::string s(spec);
-  size_t a = s.find(':'), b = s.find(':', a + 1);
-  if (a == std::string::npos || b == std::string::npos) {
+  // Split from the right: the token and port contain no ':', a host may.
+  size_t b = s.rfind(':');
+  size_t a = (b == std::string::npos || b == 0) ? std::string::npos : s.rfind(':', b - 1);
+  if (a == std::string::npos || a == 0) {
     fprintf(stderr, "pastel: bad +pastel_host value '%s'\n", spec);
     return -1;
   }
   std::string host = s.substr(0, a), port = s.substr(a + 1, b - a - 1), token = s.substr(b + 1);
+  if (host.size() >= 2 && host.front() == '[' && host.back() == ']')
+    host = host.substr(1, host.size() - 2);
 
   p.platform_ep = int(p.eps.size());
   p.eps.push_back(Endpoint{"platform", "pastel.platform", "pastel_server", {}, {}, {}});
 
-  addrinfo hints{}, *res = nullptr;
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res) {
-    fprintf(stderr, "pastel: cannot resolve host %s\n", host.c_str());
+  p.sock = dial(host, port);
+  if (p.sock < 0) {
+    fprintf(stderr, "pastel: giving up on host %s port %s\n", host.c_str(), port.c_str());
     return -1;
   }
-  p.sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-  if (p.sock < 0 || connect(p.sock, res->ai_addr, res->ai_addrlen) != 0) {
-    fprintf(stderr, "pastel: cannot connect to host %s:%s: %s\n", host.c_str(), port.c_str(),
-            strerror(errno));
-    freeaddrinfo(res);
-    return -1;
-  }
-  freeaddrinfo(res);
-  int one = 1;
-  setsockopt(p.sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+  tune_socket(p.sock);
   fcntl(p.sock, F_SETFL, fcntl(p.sock, F_GETFL) | O_NONBLOCK);
   p.connected = true;
 

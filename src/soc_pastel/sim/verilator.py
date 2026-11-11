@@ -16,13 +16,14 @@ from soc_pastel import HDL_ROOT
 from soc_pastel.core.capabilities import WAVES
 from soc_pastel.core.device import Device, Variant
 from soc_pastel.core.endpoints import EndpointHandler
-from soc_pastel.core.errors import ConfigurationError, TargetError
+from soc_pastel.core.errors import ConfigurationError, PastelTimeout, ProtocolError, TargetError
 from soc_pastel.core.memory import MemoryInterface
 from soc_pastel.core.platform import PlatformImage, SimulationPlatform
 from soc_pastel.core.util import file_lock
 
 from .handlers import Backdoor, BackdoorMemory, PlatformControl
-from .session import Listener, SocketEndpointSession
+from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
+from .session import Listener, SocketEndpointSession, accept_session
 from .sources import SimSources, load_sim_sources
 
 SIM_HW = HDL_ROOT / "sim" / "hw"
@@ -130,6 +131,11 @@ class VerilatorPlatform(SimulationPlatform):
         ``--verilator-workdir``: where models are built (shared across runs).
         ``--verilator``: the verilator executable.
         ``--waves``: dump waveforms to :data:`WAVES_FILE` in the run directory.
+
+    The model runs through the launcher chosen with ``--sim-launcher`` or
+    ``--sim-launcher-class`` (see :mod:`soc_pastel.sim.launch`), locally by
+    default. A remote launcher needs the build directory and the run
+    directory on a file system the simulation machine shares.
     """
 
     #: Waveform file written to the run directory when waves are enabled.
@@ -146,7 +152,8 @@ class VerilatorPlatform(SimulationPlatform):
         self.workdir = Path(options.get("verilator_workdir") or ".pastel/verilator").resolve()
         self.waves = bool(options.get("waves"))
         self._image: VerilatorImage | None = None
-        self._proc: subprocess.Popen | None = None
+        self._launcher: SimLauncher = make_launcher(options)
+        self._proc: SimProcess | None = None
         self._session: SocketEndpointSession | None = None
         self._listener: Listener | None = None
         self._log = None
@@ -183,21 +190,32 @@ class VerilatorPlatform(SimulationPlatform):
     def start(self) -> None:  # noqa: D102
         image = self.image()
         image.build()
-        self._listener = Listener()
-        self._log = open(self.run_dir / "sim.log", "w")
-        args = [str(image.exe), f"+pastel_host={self._listener.spec}"]
+        remote = self._launcher.remote
+        self._listener = Listener(
+            bind="" if remote else "127.0.0.1",
+            advertise=self.options.get("sim_host_address") if remote else None,
+        )
+        run_dir = self.run_dir.resolve()
+        log_path = run_dir / "sim.log"
+        self._log = open(log_path, "wb")
+        args = [str(image.exe.resolve()), f"+pastel_host={self._listener.spec}"]
+        if remote:
+            args.append("+pastel_jtag_bind=0.0.0.0")
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
-        self._proc = subprocess.Popen(
-            args,
-            cwd=self.run_dir,
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-        )
-        conn = self._listener.accept(120.0, alive=lambda: self._proc.poll() is None)
-        self._session = SocketEndpointSession(
-            conn, self._listener.token, self.expected_endpoints, self.platform_handlers
-        )
+        self._proc = self._launcher.launch(args, run_dir, self._log)
+        try:
+            self._session = accept_session(
+                self._listener,
+                connect_timeout(self.options, self._launcher),
+                self.expected_endpoints,
+                self.platform_handlers,
+                alive=lambda: self._proc.poll() is None,
+            )
+        except (ProtocolError, PastelTimeout) as e:
+            self._log.flush()
+            tail = log_path.read_text(errors="replace")[-2000:].strip()
+            raise type(e)(f"{e}; see {log_path}" + (f":\n{tail}" if tail else "")) from None
 
     def stop(self) -> None:  # noqa: D102
         if self._session is not None:
@@ -208,10 +226,15 @@ class VerilatorPlatform(SimulationPlatform):
             self._session.close()
             self._session = None
         if self._proc is not None:
-            try:
-                self._proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+            # A remote simulator also exits by itself once its connection
+            # closes; terminating the launcher (srun, ssh) is the fallback.
+            for escalate in (self._proc.terminate, self._proc.kill):
+                try:
+                    self._proc.wait(timeout=10)
+                    break
+                except subprocess.TimeoutExpired:
+                    escalate()
+            else:
                 self._proc.wait()
             self._proc = None
         if self._listener is not None:
@@ -249,5 +272,8 @@ class VerilatorPlatform(SimulationPlatform):
         return BackdoorMemory(self.variant, doors)  # type: ignore[arg-type]
 
     def debug_connection(self) -> Mapping[str, Any]:  # noqa: D102
-        port = self.endpoints.hello.info.get("jtag_port")
-        return {"remote_bitbang": ("127.0.0.1", int(port))} if port else {}
+        session = self.endpoints
+        port = session.hello.info.get("jtag_port")
+        # The JTAG server runs where the simulator does: the far end of the
+        # endpoint connection (127.0.0.1 for a local simulator).
+        return {"remote_bitbang": (session.peer, int(port))} if port else {}

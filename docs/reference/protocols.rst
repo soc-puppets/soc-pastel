@@ -7,7 +7,10 @@ Endpoint protocol (host and simulator)
 --------------------------------------
 
 The test process listens; the simulator connects to the address in its
-``+pastel_host`` plusarg. Each frame is:
+``+pastel_host`` plusarg (``<host>:<port>:<token>``), trying every address the
+host resolves to. The test process drops any connection whose first frame is
+not a HELLO with the right token, and keeps listening for the simulator. Each
+frame is:
 
 .. list-table::
    :header-rows: 1

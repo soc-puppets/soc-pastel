@@ -1,0 +1,148 @@
+Running the simulator on another machine
+========================================
+
+By default the simulator runs as a child of the test process, on the same
+machine. With a *launcher* it can run anywhere that can reach the test machine
+over TCP, such as a compute farm node under Slurm or Grid Engine, a bigger
+workstation over SSH, or a container.
+
+How it works
+------------
+
+The test process listens on a port and starts the simulator with
+``+pastel_host=<host>:<port>:<token>``. On its first clock edge the
+simulator *phones home*: it connects to that address and sends HELLO with the
+token. All endpoint traffic (backdoor, platform control, VIPs) uses that one
+connection, so the launcher only starts the process and never carries
+traffic.
+
+* With a launcher, the test process listens on every interface and
+  advertises this machine's fully qualified host name. Override the address
+  with ``--sim-host-address`` when the farm reaches you by a different name or
+  IP.
+* Connections that don't present the token are logged and dropped, so a
+  port scanner or a stale simulator from an earlier run can't take over the
+  session.
+* The simulator tries every address the host name resolves to (IPv6 and
+  IPv4) and retries for about a minute. TCP keepalives keep an idle
+  connection alive through firewalls during long stretches of simulation.
+* The testbench's JTAG server (``pastel_jtag``) listens on every interface
+  (``+pastel_jtag_bind=0.0.0.0``). OpenOCD still runs beside the test, and
+  connects to it at the address the simulator's own connection came from.
+
+Choosing a launcher
+-------------------
+
+``--sim-launcher=<template>`` runs the model through a command.
+
+Without ``{cmd}``, the template is a **prefix**: the model's command line is
+appended, and the command runs in the test's run directory. Use this form for
+launchers that keep the working directory:
+
+.. code-block:: console
+
+   $ pytest ... --sim-launcher="srun --partition=sim --cpus-per-task=4 --mem=8G"
+   $ pytest ... --sim-launcher="qrsh -cwd -now no -V"
+   $ pytest ... --sim-launcher="bsub -K -q sim"
+
+With ``{cmd}``, that token is replaced by one shell command that changes to
+the run directory and runs the model. Use this form for launchers that take a
+shell command:
+
+.. code-block:: console
+
+   $ pytest ... --sim-launcher="ssh -o BatchMode=yes simbox {cmd}"
+   $ pytest ... --sim-launcher="docker exec -i sim sh -c {cmd}"
+
+The launcher command must keep running for as long as the simulation runs,
+and end when it ends. ``srun``, ``qrsh``, ``bsub -K`` and ``ssh`` behave this
+way. ``sbatch`` and plain ``qsub`` return as soon as the job is queued, and
+PASTEL would report that the simulator exited before connecting. Use
+``qsub -sync y``, or a launcher plugin (below).
+
+PASTEL waits up to an hour for a remote simulator to connect, so a job can sit
+in the queue. Change the limit with ``--sim-connect-timeout=<seconds>``.
+
+Requirements
+------------
+
+**A shared file system.** The model is built on the test machine and run
+from the same absolute path on the remote one. The simulator also runs in the
+test's run directory, where it writes its waveform. Put both on a file system
+the machines share:
+
+.. code-block:: console
+
+   $ pytest --device=veerwolf --platform=verilator \
+       --verilator-workdir=/shared/$USER/pastel \
+       --basetemp=/shared/$USER/pytest-runs \
+       --sim-launcher="srun -p sim"
+
+pytest's default ``/tmp/pytest-of-$USER`` is usually local to each machine.
+In that case the ``{cmd}`` form fails with a ``cd`` error in ``sim.log``, and
+``srun`` warns that it couldn't change directory.
+
+**Compatible machines.** The Verilator model is a native executable, so the
+remote machine needs the same architecture and compatible system libraries.
+
+**Network reachability.** The remote machine must be able to open a TCP
+connection to the test machine on an ephemeral port. The test machine must be
+able to reach the remote one on the JTAG server's ephemeral port.
+
+**A trusted network.** OpenOCD's ``remote_bitbang`` protocol has no
+authentication. While a remote simulation runs, anything that can reach the
+compute node can connect to its JTAG port first. The endpoint connection is
+protected by the session token, but the token isn't a secret from other users
+on the same machines, because it appears in the process list.
+
+**Latency.** JTAG bit-banging over a network is slower than over loopback.
+Firmware loads through the backdoor wherever a region has one, so this mostly
+affects debug-heavy tests.
+
+Output
+------
+
+The launcher's output and the simulator's output both go to ``sim.log`` in the
+run directory. Its first line is the exact command PASTEL ran. If the
+simulator exits or times out before connecting, the error includes the end of
+``sim.log``. That usually holds the launcher's own complaint, such as an
+unknown host, a refused job or a missing directory.
+
+Stopping: PASTEL asks the simulator to finish, then terminates and finally
+kills the launcher process. A simulator also stops by itself as soon as its
+connection to the test process closes, so a killed ``ssh`` or ``srun`` never
+leaves an orphaned simulation running.
+
+Writing a launcher plugin
+-------------------------
+
+For anything a command template can't express, subclass
+:class:`~soc_pastel.sim.launch.SimLauncher`, for example to submit with
+``sbatch`` and track the job ID. ``launch`` returns an object with the
+:class:`subprocess.Popen` methods ``poll``, ``wait``, ``terminate`` and
+``kill``:
+
+.. code-block:: python
+
+   import subprocess
+   from soc_pastel.sim.launch import SimLauncher
+
+   class MyFarm(SimLauncher):
+       remote = True
+
+       def launch(self, argv, cwd, log):
+           return subprocess.Popen(
+               ["farm-run", "--queue", self.options.get("farm_queue") or "sim", "--", *argv],
+               cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+           )
+
+Select it with ``--sim-launcher-class=my_pkg.farm:MyFarm``, or register it
+under the ``soc_pastel.launchers`` entry-point group and select it by name:
+
+.. code-block:: toml
+
+   [project.entry-points."soc_pastel.launchers"]
+   myfarm = "my_pkg.farm:MyFarm"
+
+The launcher receives every pytest option in ``self.options``, so a plugin
+that defines its own options in a ``conftest.py`` can read them there.
