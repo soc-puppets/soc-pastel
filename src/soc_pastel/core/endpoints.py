@@ -27,7 +27,7 @@ HELLO payload (simulator -> host, control endpoint) is UTF-8 JSON::
 
     {"version": 1, "token": "...",
      "endpoints": [{"id": 0, "name": "spi0", "type": "spi", "path": "tb.u_spi0"}, ...],
-     "info": {"openocd_tcl_port": 6666, ...}}
+     "info": {"jtag_socket": "/tmp/pastel-jtag-Ab12Cd/jtag.sock", ...}}
 
 DATA payloads are opaque to the core; each endpoint type defines its own.
 ERROR payloads are a UTF-8 message. BYE has an empty payload and ends the
@@ -35,8 +35,9 @@ session. SYNC (host -> simulator, payload ``u32 seq``) asks the pump to reply
 with SYNC_ACK carrying the same ``seq`` once the VIP has consumed every
 message sent to that endpoint before the SYNC.
 
-Reserved endpoint types: ``"pastel.backdoor"`` (memory backdoor) and
-``"pastel.platform"`` (finish, waves, time). Pack-defined types should use
+Reserved endpoint types: ``"pastel.backdoor"`` (memory backdoor),
+``"pastel.platform"`` (finish, waves, time) and ``"pastel.pipe"`` (a
+sidecar's stdin and stdout). Pack-defined types should use
 their interface type name (``"spi"``) or a dotted vendor prefix.
 
 Finding handlers

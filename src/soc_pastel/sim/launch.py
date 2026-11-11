@@ -15,8 +15,10 @@ Three ways to choose a launcher, from the command line:
   ``module:Class``.
 
 A launcher whose :attr:`~SimLauncher.remote` is True makes the platform
-listen on every interface and tells the testbench's servers (JTAG) to do the
-same, so the simulator may run anywhere on the network.
+listen on every interface, so the simulator may run anywhere on the network.
+Helper processes such as OpenOCD run beside the simulator as sidecars (see
+:class:`~soc_pastel.core.platform.Sidecar`), so only the simulator's one
+outbound connection crosses the network.
 """
 
 from __future__ import annotations

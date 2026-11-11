@@ -6,6 +6,9 @@
 // Plusargs:
 //   +pastel_host=<ip>:<port>:<token>  set by the PASTEL platform; without it
 //                                     the simulation runs standalone.
+//   +pastel_sidecars=<file>           helper processes to run beside the
+//                                     simulator (see pastel_ep.cpp); set by
+//                                     the PASTEL platform.
 //   +pastel_waves=<file>              dump a waveform of the whole testbench
 //                                     to <file> from time 0. Needs a model
 //                                     compiled with +define+PASTEL_WAVES and
@@ -26,18 +29,22 @@ module pastel_server #(
   timeunit 1ns;
   timeprecision 1ps;  // $time below is therefore in ns, whatever the design uses
 
-  import "DPI-C" function int  pastel_server_connect(input string spec);
+  import "DPI-C" function int  pastel_server_connect(input string spec, input string sidecars);
   import "DPI-C" function int  pastel_server_poll(input longint time_ns);
   import "DPI-C" function void pastel_server_close();
   import "DPI-C" function void pastel_server_waves_init(input int can_pause);
   import "DPI-C" function int  pastel_server_waves_on();
 
   string spec = "";
+  string sidecars = "";
   bit connected = 1'b0;
   int count = 0;
   int r;
 
-  initial void'($value$plusargs("pastel_host=%s", spec));
+  initial begin
+    void'($value$plusargs("pastel_host=%s", spec));
+    void'($value$plusargs("pastel_sidecars=%s", sidecars));
+  end
 
   // --- Waves ---------------------------------------------------------------
   string waves_file = "";
@@ -77,7 +84,7 @@ module pastel_server #(
   always @(posedge clk) begin
     if (!connected) begin
       connected = 1'b1;
-      if (pastel_server_connect(spec) != 0) $fatal(1, "pastel_server: cannot connect to host");
+      if (pastel_server_connect(spec, sidecars) != 0) $fatal(1, "pastel_server: cannot connect to host");
     end
     if (++count >= POLL_CYCLES) begin
       count = 0;

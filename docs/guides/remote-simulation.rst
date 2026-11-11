@@ -4,7 +4,7 @@ Running the simulator on another machine
 By default the simulator runs as a child of the test process, on the same
 machine. With a *launcher* it can run anywhere that can reach the test machine
 over TCP, such as a compute farm node under Slurm or Grid Engine, a bigger
-workstation over SSH, or a container.
+workstation over SSH, or a container. OpenOCD goes with it.
 
 How it works
 ------------
@@ -12,9 +12,20 @@ How it works
 The test process listens on a port and starts the simulator with
 ``+pastel_host=<host>:<port>:<token>``. On its first clock edge the
 simulator *phones home*: it connects to that address and sends HELLO with the
-token. All endpoint traffic (backdoor, platform control, VIPs) uses that one
-connection, so the launcher only starts the process and never carries
-traffic.
+token. All traffic uses that one connection, including backdoor, platform
+control, VIPs and debug. The launcher only starts the process and never
+carries traffic.
+
+.. code-block:: text
+
+   test machine                         simulation machine
+   ┌──────────────────────┐            ┌─────────────────────────────────┐
+   │ pytest               │  one TCP   │ simulator (Vsim)                │
+   │  └ endpoint session ◄├────────────┤  ├ endpoint pump ──┐ stdin/out  │
+   │     ├ backdoor, VIPs │ connection │  │                 ▼            │
+   │     └ OpenOCD Tcl    │ (outbound  │  │       OpenOCD (sidecar)      │
+   │                      │  from sim) │  └ pastel_jtag ◄── Unix socket  │
+   └──────────────────────┘            └─────────────────────────────────┘
 
 * With a launcher, the test process listens on every interface and
   advertises this machine's fully qualified host name. Override the address
@@ -26,9 +37,13 @@ traffic.
 * The simulator tries every address the host name resolves to (IPv6 and
   IPv4) and retries for about a minute. TCP keepalives keep an idle
   connection alive through firewalls during long stretches of simulation.
-* The testbench's JTAG server (``pastel_jtag``) listens on every interface
-  (``+pastel_jtag_bind=0.0.0.0``). OpenOCD still runs beside the test, and
-  connects to it at the address the simulator's own connection came from.
+* OpenOCD is a *sidecar*: the simulator starts it as a child process on the
+  same machine, and it never outlives the simulation. It drives the
+  testbench's JTAG server over a Unix socket in a private temporary
+  directory. It serves Tcl on its stdin and stdout, which the simulator
+  relays over its connection to the test process. Bit-level JTAG traffic
+  never crosses the network, and nothing on the simulation machine listens on
+  a network port.
 
 Choosing a launcher
 -------------------
@@ -85,19 +100,20 @@ In that case the ``{cmd}`` form fails with a ``cd`` error in ``sim.log``, and
 **Compatible machines.** The Verilator model is a native executable, so the
 remote machine needs the same architecture and compatible system libraries.
 
+**OpenOCD on the simulation machine.** OpenOCD runs where the simulator
+does, so it must be on that machine's ``PATH``, or at the path given by
+``PASTEL_OPENOCD`` or the binding's ``executable``. If it can't be found,
+``openocd.log`` says ``cannot run openocd`` and the test fails with
+``OpenOCD exited during start-up (is it installed on the simulation
+machine?)``.
+
 **Network reachability.** The remote machine must be able to open a TCP
-connection to the test machine on an ephemeral port. The test machine must be
-able to reach the remote one on the JTAG server's ephemeral port.
+connection to the test machine on an ephemeral port. Nothing needs to connect
+the other way.
 
-**A trusted network.** OpenOCD's ``remote_bitbang`` protocol has no
-authentication. While a remote simulation runs, anything that can reach the
-compute node can connect to its JTAG port first. The endpoint connection is
-protected by the session token, but the token isn't a secret from other users
-on the same machines, because it appears in the process list.
-
-**Latency.** JTAG bit-banging over a network is slower than over loopback.
-Firmware loads through the backdoor wherever a region has one, so this mostly
-affects debug-heavy tests.
+**The session token.** The token keeps other connections out of the session,
+but it isn't a secret from other users on the same machines: it appears in
+the simulator's command line.
 
 Output
 ------
@@ -108,9 +124,14 @@ simulator exits or times out before connecting, the error includes the end of
 ``sim.log``. That usually holds the launcher's own complaint, such as an
 unknown host, a refused job or a missing directory.
 
-Stopping: PASTEL asks the simulator to finish, then terminates and finally
-kills the launcher process. A simulator also stops by itself as soon as its
-connection to the test process closes, so a killed ``ssh`` or ``srun`` never
+``openocd.log`` and ``openocd.cfg`` are in the run directory too. OpenOCD
+writes its log there from the simulation machine.
+
+Stopping: PASTEL asks the simulator to finish. The simulator keeps running
+until OpenOCD has shut down, because OpenOCD may still need JTAG while it does,
+then exits. PASTEL then terminates, and finally kills, the launcher process.
+A simulator also stops by itself as soon as its connection to the test
+process closes, and OpenOCD dies with it. A killed ``ssh`` or ``srun`` never
 leaves an orphaned simulation running.
 
 Writing a launcher plugin

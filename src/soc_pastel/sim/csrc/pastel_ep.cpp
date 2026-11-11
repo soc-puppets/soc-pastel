@@ -6,6 +6,17 @@
 //
 // Single-threaded and non-blocking: everything happens inside DPI calls made
 // from the simulation thread, so no simulation time is ever consumed here.
+//
+// It also runs *sidecars*: helper processes (OpenOCD) started beside the
+// simulator, on the same machine, whose stdin and stdout are relayed to the
+// host as an endpoint of type "pastel.pipe". The host lists them in a file
+// named by +pastel_sidecars, one per line, tab-separated:
+//     <endpoint name> TAB <stderr log file> TAB <argv0> TAB <argv1> ...
+// pastel.pipe messages (DATA payloads):
+//     host -> sim  u8 0, bytes   write to the sidecar's stdin
+//                  u8 1          close its stdin
+//     sim -> host  u8 0, bytes   read from its stdout
+//                  u8 1, i32     it exited: exit code, or -signal
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -14,14 +25,21 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <csignal>
 #include <fcntl.h>
+#include <fstream>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <vector>
 
 #include "pastel_sim.h"
@@ -48,8 +66,19 @@ struct Endpoint {
   std::vector<uint32_t> pending_syncs;
 };
 
+struct Sidecar {
+  std::string name, log;
+  std::vector<std::string> argv;
+  int ep = -1;
+  pid_t pid = -1;
+  int in_fd = -1, out_fd = -1;
+  std::vector<uint8_t> to_child;
+  bool close_in = false, reported = false;
+};
+
 struct Pump {
   std::vector<Endpoint> eps;
+  std::vector<Sidecar> sidecars;
   int sock = -1;
   bool connected = false, finish = false, lost = false;
   std::vector<uint8_t> in, out;
@@ -57,6 +86,7 @@ struct Pump {
   int64_t time_ns = 0;
   int platform_ep = -1;
   bool waves_pausable = false, waves_on = false;
+  double finish_deadline = 0;  // wall clock, once finishing: sidecars get until then
 };
 
 Pump& pump() {
@@ -135,6 +165,182 @@ void handle_platform(const std::vector<uint8_t>& m) {
   }
 }
 
+// --- Sidecars ----------------------------------------------------------------
+
+enum PipeOp : uint8_t { PIPE_DATA = 0, PIPE_CLOSE = 1 };
+
+Sidecar* sidecar_for(int ep) {
+  for (Sidecar& sc : pump().sidecars)
+    if (sc.ep == ep) return &sc;
+  return nullptr;
+}
+
+std::vector<std::string> split_tabs(const std::string& line) {
+  std::vector<std::string> out;
+  size_t start = 0;
+  for (;;) {
+    size_t tab = line.find('\t', start);
+    out.push_back(line.substr(start, tab - start));
+    if (tab == std::string::npos) return out;
+    start = tab + 1;
+  }
+}
+
+// Read the sidecar list and add an endpoint for each. Before HELLO.
+bool load_sidecars(const char* file) {
+  Pump& p = pump();
+  if (!file || !*file) return true;
+  std::ifstream in(file);
+  if (!in) {
+    fprintf(stderr, "pastel: cannot read sidecar list %s\n", file);
+    return false;
+  }
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    std::vector<std::string> f = split_tabs(line);
+    if (f.size() < 3) {
+      fprintf(stderr, "pastel: bad sidecar line in %s: %s\n", file, line.c_str());
+      return false;
+    }
+    Sidecar sc;
+    sc.name = f[0];
+    sc.log = f[1];
+    sc.argv.assign(f.begin() + 2, f.end());
+    sc.ep = int(p.eps.size());
+    p.eps.push_back(Endpoint{sc.name, "pastel.pipe", "pastel_server", {}, {}, {}});
+    p.sidecars.push_back(std::move(sc));
+  }
+  return true;
+}
+
+void spawn(Sidecar& sc) {
+  int to_child[2], from_child[2];
+  if (pipe(to_child) != 0 || pipe(from_child) != 0) {
+    fprintf(stderr, "pastel: sidecar %s: pipe: %s\n", sc.name.c_str(), strerror(errno));
+    return;
+  }
+  pid_t pid = fork();
+  if (pid == 0) {
+#ifdef __linux__
+    prctl(PR_SET_PDEATHSIG, SIGKILL);  // never outlive the simulator
+#endif
+    signal(SIGPIPE, SIG_DFL);
+    dup2(to_child[0], 0);
+    dup2(from_child[1], 1);
+    int log = open(sc.log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (log >= 0) dup2(log, 2);
+    for (int fd = 3; fd < 1024; fd++) close(fd);  // not the host connection or JTAG socket
+    std::vector<char*> argv;
+    for (std::string& a : sc.argv) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    execvp(argv[0], argv.data());
+    fprintf(stderr, "pastel: cannot run %s: %s\n", argv[0], strerror(errno));
+    _exit(127);
+  }
+  close(to_child[0]);
+  close(from_child[1]);
+  if (pid < 0) {
+    fprintf(stderr, "pastel: sidecar %s: fork: %s\n", sc.name.c_str(), strerror(errno));
+    close(to_child[1]);
+    close(from_child[0]);
+    return;
+  }
+  sc.pid = pid;
+  sc.in_fd = to_child[1];
+  sc.out_fd = from_child[0];
+  fcntl(sc.in_fd, F_SETFL, fcntl(sc.in_fd, F_GETFL) | O_NONBLOCK);
+  fcntl(sc.out_fd, F_SETFL, fcntl(sc.out_fd, F_GETFL) | O_NONBLOCK);
+  fcntl(sc.in_fd, F_SETFD, FD_CLOEXEC);
+  fcntl(sc.out_fd, F_SETFD, FD_CLOEXEC);
+}
+
+void report_exit(Sidecar& sc, int status) {
+  int32_t code = WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
+  std::vector<uint8_t> b{PIPE_CLOSE};
+  put_u32(b, uint32_t(code));
+  queue_frame(uint16_t(sc.ep), DATA, b.data(), b.size());
+  sc.reported = true;
+}
+
+void service_sidecar(Sidecar& sc) {
+  if (sc.in_fd >= 0) {
+    while (!sc.to_child.empty()) {
+      ssize_t n = write(sc.in_fd, sc.to_child.data(), sc.to_child.size());
+      if (n > 0) {
+        sc.to_child.erase(sc.to_child.begin(), sc.to_child.begin() + n);
+      } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        break;
+      } else {  // the sidecar closed its stdin
+        sc.to_child.clear();
+        sc.close_in = true;
+      }
+    }
+    if (sc.close_in && sc.to_child.empty()) {
+      close(sc.in_fd);
+      sc.in_fd = -1;
+    }
+  }
+  if (sc.out_fd >= 0) {
+    uint8_t buf[65536];
+    buf[0] = PIPE_DATA;
+    ssize_t n = read(sc.out_fd, buf + 1, sizeof buf - 1);
+    if (n > 0) {
+      queue_frame(uint16_t(sc.ep), DATA, buf, size_t(n) + 1);
+    } else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+      close(sc.out_fd);
+      sc.out_fd = -1;
+    }
+  }
+  // Report the exit once its output has all been relayed.
+  if (sc.pid > 0 && sc.out_fd < 0 && !sc.reported) {
+    int status = 0;
+    if (waitpid(sc.pid, &status, WNOHANG) == sc.pid) {
+      sc.pid = -1;
+      report_exit(sc, status);
+    }
+  }
+}
+
+double now_s() {
+  timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+bool sidecars_running() {
+  for (const Sidecar& sc : pump().sidecars)
+    if (sc.pid > 0) return true;
+  return false;
+}
+
+void stop_sidecars() {
+  for (Sidecar& sc : pump().sidecars) {
+    if (sc.in_fd >= 0) close(sc.in_fd);  // OpenOCD exits when its Tcl pipe closes
+    if (sc.out_fd >= 0) close(sc.out_fd);
+    sc.in_fd = sc.out_fd = -1;
+    if (sc.pid <= 0) continue;
+    // Normally gone by now (see pastel_server_poll). Anything left can't be
+    // waited for: with the simulation stopped, it may be stuck on JTAG.
+    int status;
+    if (waitpid(sc.pid, &status, WNOHANG) == 0) {
+      kill(sc.pid, SIGKILL);
+      waitpid(sc.pid, &status, 0);
+    }
+    sc.pid = -1;
+  }
+}
+
+void handle_pipe(Sidecar& sc, const std::vector<uint8_t>& m) {
+  if (m.empty()) return;
+  if (m[0] == PIPE_DATA && !sc.close_in) {
+    sc.to_child.insert(sc.to_child.end(), m.begin() + 1, m.end());
+  } else if (m[0] == PIPE_CLOSE) {
+    sc.close_in = true;
+  }
+  service_sidecar(sc);
+}
+
 void dispatch(uint16_t ep, uint8_t kind, std::vector<uint8_t> payload) {
   Pump& p = pump();
   if (ep == kControl) {
@@ -152,6 +358,8 @@ void dispatch(uint16_t ep, uint8_t kind, std::vector<uint8_t> payload) {
   if (kind == DATA) {
     if (int(ep) == p.platform_ep) {
       handle_platform(payload);
+    } else if (Sidecar* sc = sidecar_for(ep)) {
+      handle_pipe(*sc, payload);
     } else {
       p.eps[ep].rx.push_back(std::move(payload));
     }
@@ -325,11 +533,11 @@ void pastel_ep_tx_end(int h) {
   flush();
 }
 
-// Connect to the host given as "<host>:<port>:<token>" and send HELLO.
-// <host> is a name, an IPv4 address or a bracketed IPv6 address
-// ("[fd00::1]"). Returns 0 on success, -1 on failure. An empty spec means
-// "no host".
-int pastel_server_connect(const char* spec) {
+// Connect to the host given as "<host>:<port>:<token>", send HELLO, and start
+// the sidecars listed in the file `sidecars` (may be empty). <host> is a
+// name, an IPv4 address or a bracketed IPv6 address ("[fd00::1]"). Returns 0
+// on success, -1 on failure. An empty spec means "no host".
+int pastel_server_connect(const char* spec, const char* sidecars) {
   Pump& p = pump();
   if (!spec || !*spec) return 0;
   std::string s(spec);
@@ -346,6 +554,7 @@ int pastel_server_connect(const char* spec) {
 
   p.platform_ep = int(p.eps.size());
   p.eps.push_back(Endpoint{"platform", "pastel.platform", "pastel_server", {}, {}, {}});
+  if (!load_sidecars(sidecars)) return -1;
 
   p.sock = dial(host, port);
   if (p.sock < 0) {
@@ -371,19 +580,30 @@ int pastel_server_connect(const char* spec) {
   j += "}}";
   queue_frame(kControl, HELLO, reinterpret_cast<const uint8_t*>(j.data()), j.size());
   flush();
+  if (!p.sidecars.empty()) signal(SIGPIPE, SIG_IGN);  // a sidecar's stdin may close
+  for (Sidecar& sc : p.sidecars) spawn(sc);
   return 0;
 }
 
 // Service the connection. Returns 0 to continue, 1 if the host asked the
 // simulation to finish, 2 if the connection was lost.
+//
+// Once asked to finish, the simulation keeps running until every sidecar has
+// exited (at most a few seconds): OpenOCD may still drive JTAG while it
+// shuts down, and that needs the simulation to keep ticking.
 int pastel_server_poll(long long time_ns) {
   Pump& p = pump();
   p.time_ns = time_ns;
-  if (p.connected) {
-    receive();
-    flush();
+  if (p.connected) receive();
+  for (Sidecar& sc : p.sidecars) service_sidecar(sc);
+  if (p.connected) flush();
+  if (p.finish) {
+    if (p.finish_deadline == 0) {
+      p.finish_deadline = now_s() + 5.0;
+      for (Sidecar& sc : p.sidecars) sc.close_in = true;  // OpenOCD exits on EOF
+    }
+    return (sidecars_running() && now_s() < p.finish_deadline) ? 0 : 1;
   }
-  if (p.finish) return 1;
   if (p.lost) return 2;
   return 0;
 }
@@ -401,6 +621,7 @@ int pastel_server_waves_on(void) { return pump().waves_on; }
 
 void pastel_server_close(void) {
   Pump& p = pump();
+  stop_sidecars();
   if (p.connected) {
     queue_frame(kControl, BYE, nullptr, 0);
     flush();

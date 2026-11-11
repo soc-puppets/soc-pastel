@@ -243,7 +243,8 @@ The OpenOCD configuration is assembled from three parts:
 
 ``transport``
    How JTAG reaches the chip. In simulation always ``remote_bitbang``; PASTEL
-   fills in the port.
+   runs OpenOCD beside the simulator and points it at the testbench's JTAG
+   socket.
 ``cpu``
    Debug-module settings for the CPU family. ``veer`` selects system-bus memory
    access with abstract access as a fallback, exposes VeeR's ``dmst`` CSR, and

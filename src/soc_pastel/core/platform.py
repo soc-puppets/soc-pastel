@@ -18,7 +18,8 @@ running, so timeouts never armed on silicon):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -39,6 +40,43 @@ class PlatformKind(str, Enum):
     SIM = "sim"
     FPGA = "fpga"
     SILICON = "silicon"
+
+
+@dataclass(frozen=True)
+class Sidecar:
+    """A helper process a simulation runs beside the simulator.
+
+    The simulator itself starts the process, on whichever machine it runs,
+    in its working directory (the run directory), and stops it when the
+    simulation ends. The process's stdin and stdout are relayed to the test
+    process over the endpoint connection as a ``pastel.pipe`` endpoint called
+    :attr:`name` (see :class:`~soc_pastel.sim.handlers.Pipe`); its stderr goes
+    to :attr:`log`. Nothing it does needs a network port of its own.
+
+    Interfaces declare sidecars through
+    :meth:`~soc_pastel.core.interface.Interface.sim_sidecars`. OpenOCD is
+    one: it drives the testbench's JTAG over a local socket, and only Tcl
+    crosses to the test process.
+
+    Attributes:
+        name: Endpoint name, unique in the simulation.
+        argv: Command line. ``argv[0]`` is looked up on the simulation
+            machine's ``PATH``; relative paths are relative to the run directory.
+        log: File in the run directory for the process's stderr.
+    """
+
+    name: str
+    argv: Sequence[str]
+    log: str
+
+    def __post_init__(self) -> None:
+        from .errors import ConfigurationError
+
+        for value in (self.name, self.log, *self.argv):
+            if "\t" in value or "\n" in value:
+                raise ConfigurationError(f"sidecar {self.name!r}: tab or newline in {value!r}")
+        if not self.argv:
+            raise ConfigurationError(f"sidecar {self.name!r} has no command")
 
 
 class PlatformImage(ABC):
@@ -131,9 +169,11 @@ class Platform(ABC):
     def debug_connection(self) -> Mapping[str, Any]:
         """How on-chip debug reaches the target on this platform.
 
-        Simulations return e.g. ``{"remote_bitbang": ("127.0.0.1", 41234)}``;
-        hardware platforms usually return nothing, because the debug binding
-        names its probe directly.
+        For example ``{"remote_bitbang": ("127.0.0.1", 41234)}`` for a
+        bitbang server reachable over TCP. Hardware platforms usually return
+        nothing, because the debug binding names its probe directly, and
+        simulations return nothing because OpenOCD runs as a
+        :class:`Sidecar` beside the simulator.
         """
         return {}
 
@@ -155,7 +195,9 @@ class SimulationPlatform(Platform):
     Before :meth:`start`, the harness tells the platform which interface
     endpoints to expect (:attr:`expected_endpoints`). On HELLO the platform
     passes them, with its own :attr:`platform_handlers`, to
-    :func:`~soc_pastel.core.endpoints.match_hello`.
+    :func:`~soc_pastel.core.endpoints.match_hello`. It also hands over the
+    interfaces' :attr:`sidecars`, which the platform must have the simulator
+    start.
     """
 
     kind: ClassVar[PlatformKind] = PlatformKind.SIM
@@ -167,6 +209,8 @@ class SimulationPlatform(Platform):
         super().__init__(device, variant, options)
         #: Endpoint-backed interfaces bound for this run, keyed by instance name.
         self.expected_endpoints: dict[str, ExpectedEndpoint] = {}
+        #: Helper processes to run beside the simulator.
+        self.sidecars: list[Sidecar] = []
 
     def capabilities(self) -> frozenset[str]:
         """Simulations always have a backdoor and their own notion of time."""

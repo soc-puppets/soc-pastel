@@ -72,10 +72,13 @@ listed: a region's ``backdoor`` name with no backdoor module, a backdoor whose
 name isn't in the descriptor, or an interface VIP of the wrong type.
 
 **``OpenOCD exited during start-up``.**
-See ``openocd.log``. Typical causes: the ``chain`` Tcl has the wrong IR length,
-or ``-expected-id`` doesn't match the TAP's IDCODE (the log prints the IDCODE
-it found), or the testbench's JTAG wiring is wrong, in which case OpenOCD
-reports all ones or all zeros.
+The error shows the end of ``openocd.log``. With ``(is it installed on the
+simulation machine?)``, the simulator couldn't run OpenOCD: put it on the
+simulation machine's ``PATH`` or set ``PASTEL_OPENOCD``. Otherwise, typical
+causes are: the ``chain`` Tcl has the wrong IR length, or ``-expected-id``
+doesn't match the TAP's IDCODE (the log prints the IDCODE it found), or the
+testbench's JTAG wiring is wrong, in which case OpenOCD reports all ones or
+all zeros.
 
 **``target did not halt after reset``.**
 Debug reached the TAP but the CPU didn't halt: check the reset wiring between

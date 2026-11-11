@@ -35,11 +35,6 @@ def _tune(conn: socket.socket) -> None:
             conn.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), value)
 
 
-def plain_address(addr: str) -> str:
-    """``addr`` without an IPv4-mapped IPv6 prefix (``::ffff:10.0.0.5`` -> ``10.0.0.5``)."""
-    return addr[7:] if addr.lower().startswith("::ffff:") and "." in addr else addr
-
-
 class UnexpectedPeer(ProtocolError):
     """A connection that is not the simulator we launched (no HELLO, wrong token)."""
 
@@ -149,10 +144,6 @@ class SocketEndpointSession(EndpointSession):
         self._acked: set[tuple[int, int]] = set()
         self.error: str | None = None
 
-        try:
-            self.peer: str = plain_address(conn.getpeername()[0])
-        except (OSError, IndexError):
-            self.peer = "127.0.0.1"
         conn.settimeout(hello_timeout_s)
         try:
             first = self._read_frames(block=True)

@@ -1,24 +1,32 @@
 // SPDX-License-Identifier: MIT
 //
 // JTAG for simulation: an OpenOCD remote_bitbang server driven from the
-// pastel_jtag module. It listens on an ephemeral port (or +pastel_jtag_port)
-// and reports the port to the host in the endpoint HELLO as "jtag_port".
-// It listens on loopback only, unless +pastel_jtag_bind names another address
-// ("0.0.0.0" or "::" for every interface, IPv4 and IPv6), which PASTEL sets
-// when the simulator runs on a different machine from OpenOCD. The protocol
-// has no authentication, so only do that on a trusted network.
+// pastel_jtag module.
+//
+// By default it listens on a Unix socket in a private directory under
+// $TMPDIR (or /tmp), exports the path to child processes as
+// PASTEL_JTAG_SOCKET and reports it in the endpoint HELLO as "jtag_socket".
+// PASTEL runs OpenOCD as a sidecar of the simulator, so it inherits the
+// variable; JTAG never leaves the machine the simulator runs on.
+//
+// With +pastel_jtag_port=<n> it listens on TCP port n on loopback instead
+// (0 picks a free port), reported in HELLO as "jtag_port", for driving a
+// model by hand with your own OpenOCD.
+//
 // One bitbang command is applied per call, so TCK runs at most at half the
 // rate pastel_jtag is clocked.
 
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "pastel_sim.h"
@@ -30,84 +38,87 @@ struct Jtag {
   unsigned char buf[4096];
   int len = 0, pos = 0;
   svBit tck = 0, tms = 0, tdi = 0, trst_n = 1;
+  std::string dir, path;  // Unix socket, removed at exit
 };
 Jtag j;
 
 void set_nonblock(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); }
 
-// Bind and listen on addr:port; returns the socket or -1.
-int listen_on(const char* addr, int port) {
-  sockaddr_storage ss{};
-  socklen_t len = 0;
-  bool any = !strcmp(addr, "0.0.0.0") || !strcmp(addr, "::") || !strcmp(addr, "any");
-  int family = AF_INET;
-  if (any) {
-    // Prefer one dual-stack socket: OpenOCD dials whichever address the
-    // simulator's own connection to the host came from.
-    family = AF_INET6;
-    auto* a6 = reinterpret_cast<sockaddr_in6*>(&ss);
-    a6->sin6_family = AF_INET6;
-    a6->sin6_addr = in6addr_any;
-    a6->sin6_port = htons(uint16_t(port));
-    len = sizeof *a6;
-  } else {
-    auto* a4 = reinterpret_cast<sockaddr_in*>(&ss);
-    auto* a6 = reinterpret_cast<sockaddr_in6*>(&ss);
-    if (inet_pton(AF_INET, addr, &a4->sin_addr) == 1) {
-      a4->sin_family = AF_INET;
-      a4->sin_port = htons(uint16_t(port));
-      len = sizeof *a4;
-    } else if (inet_pton(AF_INET6, addr, &a6->sin6_addr) == 1) {
-      family = AF_INET6;
-      a6->sin6_family = AF_INET6;
-      a6->sin6_port = htons(uint16_t(port));
-      len = sizeof *a6;
-    } else {
-      fprintf(stderr, "pastel_jtag: bad bind address '%s'\n", addr);
-      return -1;
-    }
+void cleanup() {
+  if (!j.path.empty()) unlink(j.path.c_str());
+  if (!j.dir.empty()) rmdir(j.dir.c_str());
+}
+
+std::string json_string(const std::string& s) {
+  std::string o = "\"";
+  for (char c : s) {
+    if (c == '"' || c == '\\') o.push_back('\\');
+    o.push_back(c);
   }
-  int fd = socket(family, SOCK_STREAM, 0);
-  if (fd < 0) return -1;
-  int one = 1, zero = 0;
+  return o + "\"";
+}
+
+int open_tcp(int port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  int one = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-  if (any) setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof zero);
-  if (bind(fd, reinterpret_cast<sockaddr*>(&ss), len) != 0 || listen(fd, 1) != 0) {
-    int saved = errno;
+  sockaddr_in a{};
+  a.sin_family = AF_INET;
+  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  a.sin_port = htons(uint16_t(port));
+  if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(fd, 1) != 0) {
+    fprintf(stderr, "pastel_jtag: cannot listen on port %d: %s\n", port, strerror(errno));
     close(fd);
-    errno = saved;
     return -1;
   }
+  socklen_t al = sizeof a;
+  getsockname(fd, reinterpret_cast<sockaddr*>(&a), &al);
+  pastel_sim_info("jtag_port", std::to_string(ntohs(a.sin_port)).c_str());
   return fd;
 }
 
-int bound_port(int fd) {
-  sockaddr_storage ss{};
-  socklen_t len = sizeof ss;
-  getsockname(fd, reinterpret_cast<sockaddr*>(&ss), &len);
-  return ss.ss_family == AF_INET6 ? ntohs(reinterpret_cast<sockaddr_in6*>(&ss)->sin6_port)
-                                  : ntohs(reinterpret_cast<sockaddr_in*>(&ss)->sin_port);
+int open_unix() {
+  sockaddr_un a{};
+  a.sun_family = AF_UNIX;
+  const char* tmp = getenv("TMPDIR");
+  for (const char* base : {tmp, "/tmp"}) {
+    if (!base || !*base) continue;
+    std::string tmpl = std::string(base) + "/pastel-jtag-XXXXXX";
+    if (tmpl.size() + 10 >= sizeof a.sun_path) continue;  // room for "/jtag.sock"
+    if (mkdtemp(tmpl.data())) {
+      j.dir = tmpl;
+      break;
+    }
+  }
+  if (j.dir.empty()) {
+    fprintf(stderr, "pastel_jtag: cannot create a socket directory: %s\n", strerror(errno));
+    return -1;
+  }
+  j.path = j.dir + "/jtag.sock";
+  atexit(cleanup);
+  memcpy(a.sun_path, j.path.c_str(), j.path.size() + 1);
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(fd, 1) != 0) {
+    fprintf(stderr, "pastel_jtag: cannot listen on %s: %s\n", j.path.c_str(), strerror(errno));
+    close(fd);
+    return -1;
+  }
+  setenv("PASTEL_JTAG_SOCKET", j.path.c_str(), 1);
+  pastel_sim_info("jtag_socket", json_string(j.path).c_str());
+  return fd;
 }
 }  // namespace
 
 extern "C" {
 
-// Start listening on bind_addr ("" for loopback). port 0 picks a free port.
-// Returns the port, or -1.
-int pastel_jtag_open(int port, const char* bind_addr) {
-  const char* addr = (bind_addr && *bind_addr) ? bind_addr : "127.0.0.1";
-  j.listen_fd = listen_on(addr, port);
-  if (j.listen_fd < 0 && (!strcmp(addr, "0.0.0.0") || !strcmp(addr, "::"))) {
-    j.listen_fd = listen_on("0.0.0.0", port);  // no IPv6 here: IPv4 only
-  }
-  if (j.listen_fd < 0) {
-    fprintf(stderr, "pastel_jtag: cannot listen on %s: %s\n", addr, strerror(errno));
-    return -1;
-  }
+// Start listening: on TCP port `port` on loopback (0 picks one), or on a
+// Unix socket if port is negative. Returns 0, or -1 on failure.
+int pastel_jtag_open(int port) {
+  j.listen_fd = port >= 0 ? open_tcp(port) : open_unix();
+  if (j.listen_fd < 0) return -1;
+  fcntl(j.listen_fd, F_SETFD, FD_CLOEXEC);
   set_nonblock(j.listen_fd);
-  int actual = bound_port(j.listen_fd);
-  pastel_sim_info("jtag_port", std::to_string(actual).c_str());
-  return actual;
+  return 0;
 }
 
 void pastel_jtag_tick(svBit tdo, svBit* tck, svBit* tms, svBit* tdi, svBit* trst_n) {
@@ -115,7 +126,8 @@ void pastel_jtag_tick(svBit tdo, svBit* tck, svBit* tms, svBit* tdi, svBit* trst
     int fd = accept(j.listen_fd, nullptr, nullptr);
     if (fd >= 0) {
       int one = 1;
-      setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+      setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);  // fails harmlessly on Unix
+      fcntl(fd, F_SETFD, FD_CLOEXEC);
       set_nonblock(fd);
       j.fd = fd;
     }

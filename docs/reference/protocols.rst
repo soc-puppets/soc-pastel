@@ -69,7 +69,7 @@ The simulator's first frame is HELLO:
 
    {"version": 1, "token": "...",
     "endpoints": [{"id": 0, "name": "ram", "type": "pastel.backdoor", "path": "tb.u_backdoor"}],
-    "info": {"jtag_port": 41234}}
+    "info": {"jtag_socket": "/tmp/pastel-jtag-Ab12Cd/jtag.sock"}}
 
 The host checks the version and token, and checks the endpoints against the
 device descriptor.
@@ -121,6 +121,40 @@ device descriptor.
      - op \| ``80``, u32 seq, u8 status (0 ok, 1 out of range), data for READ
 
 Offsets are bytes from the region base.
+
+.. _pastel-pipe:
+
+``pastel.pipe``
+~~~~~~~~~~~~~~~
+
+The stdin and stdout of a *sidecar*, a helper process the simulator starts
+beside itself (see :class:`~soc_pastel.core.platform.Sidecar`). The host lists
+sidecars in a file named by ``+pastel_sidecars``, one per line, with
+tab-separated fields: the endpoint name, the file for the process's stderr,
+then its command line. The simulator announces one ``pastel.pipe`` endpoint
+per sidecar, and starts each one after HELLO in its working directory. Once
+asked to finish, it keeps running until every sidecar has exited, for at
+most 5 seconds, and kills any that are left.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Message
+     - Direction
+     - Bytes
+   * - DATA
+     - host → sim
+     - ``00``, bytes for the sidecar's stdin
+   * - CLOSE
+     - host → sim
+     - ``01``; closes the sidecar's stdin
+   * - DATA
+     - sim → host
+     - ``00``, bytes from the sidecar's stdout
+   * - EXITED
+     - sim → host
+     - ``01``, i32 exit code, or minus the signal number; sent after all of
+       its output
 
 VIP DPI functions
 -----------------

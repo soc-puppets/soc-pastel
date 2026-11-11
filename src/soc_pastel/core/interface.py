@@ -19,11 +19,12 @@ not interfaces; see :mod:`soc_pastel.core.capabilities`.
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from .harness import PlatformHarness
+    from .platform import Sidecar
 
 
 class Interface(ABC):
@@ -53,6 +54,16 @@ class Interface(ABC):
 
     def close(self) -> None:  # noqa: B027 - deliberately optional hook
         """Release resources. Called once by the harness; must be idempotent."""
+
+    def sim_sidecars(self) -> Iterable[Sidecar]:
+        """Helper processes to run beside the simulator, on a simulation platform.
+
+        Called by the harness before the platform starts, so a sidecar's
+        configuration files can be written to the run directory first. The
+        interface reaches each one in :meth:`open` through the platform's
+        endpoint session, by the sidecar's name.
+        """
+        return ()
 
     def __repr__(self) -> str:
         impl = getattr(self, "impl_name", "?")

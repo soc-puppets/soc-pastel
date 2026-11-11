@@ -92,8 +92,12 @@ control). Endpoints exchange opaque byte messages; a small C++ pump inside the
 simulator moves them, and all interpretation happens in the test process. No
 Python runs inside the simulator.
 
-OpenOCD runs beside the test process and talks JTAG to the testbench's
-``pastel_jtag`` over OpenOCD's ``remote_bitbang`` protocol.
+OpenOCD runs beside the simulator, as a *sidecar* the simulator starts
+itself. It talks JTAG to the testbench's ``pastel_jtag`` over OpenOCD's
+``remote_bitbang`` protocol on a Unix socket. It serves Tcl on its stdin and
+stdout, which the simulator relays to the test process over the endpoint
+connection. Only Tcl commands and replies cross between OpenOCD and the test
+process.
 
 The simulator need not run on the test machine. A launcher (``srun``,
 ``ssh``, or a plugin) can start it anywhere that can phone home over TCP. See

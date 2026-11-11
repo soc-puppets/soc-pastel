@@ -25,7 +25,7 @@ from soc_pastel.sim.launch import (
     connect_timeout,
     make_launcher,
 )
-from soc_pastel.sim.session import Listener, accept_session, plain_address
+from soc_pastel.sim.session import Listener, accept_session
 
 HANDLERS = {"pastel.platform": PlatformControl}
 
@@ -130,7 +130,6 @@ def test_network_listener_spec_and_stray_connections():
     t.start()
     session = accept_session(lst, 20, {}, HANDLERS)
     assert session.hello.info["jtag_port"] == 9
-    assert session.peer == "127.0.0.1"  # not ::ffff:127.0.0.1 from the dual-stack socket
     session.close()
     lst.close()
     for s in keep:
@@ -141,9 +140,3 @@ def test_ipv6_advertise_is_bracketed():
     lst = Listener(bind="", advertise="fd00::5")
     assert lst.spec.startswith(f"[fd00::5]:{lst.port}:")
     lst.close()
-
-
-def test_plain_address():
-    assert plain_address("::ffff:10.1.2.3") == "10.1.2.3"
-    assert plain_address("fd00::5") == "fd00::5"
-    assert plain_address("10.1.2.3") == "10.1.2.3"

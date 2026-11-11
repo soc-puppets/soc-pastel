@@ -138,6 +138,9 @@ class PlatformHarness:
                 for name, inst in self._interfaces.items()
                 if isinstance(inst, EndpointBacked)
             }
+            self.platform.sidecars = [
+                sidecar for inst in self._interfaces.values() for sidecar in inst.sim_sidecars()
+            ]
         self.platform.start()
         order = [ON_CHIP_DEBUG] + [n for n in self._interfaces if n != ON_CHIP_DEBUG]
         try:

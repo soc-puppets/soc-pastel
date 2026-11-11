@@ -21,7 +21,7 @@ from soc_pastel.core.memory import MemoryInterface
 from soc_pastel.core.platform import PlatformImage, SimulationPlatform
 from soc_pastel.core.util import file_lock
 
-from .handlers import Backdoor, BackdoorMemory, PlatformControl
+from .handlers import Backdoor, BackdoorMemory, Pipe, PlatformControl
 from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
 from .session import Listener, SocketEndpointSession, accept_session
 from .sources import SimSources, load_sim_sources
@@ -145,7 +145,11 @@ class VerilatorPlatform(SimulationPlatform):
     platform_handlers: ClassVar[Mapping[str, type[EndpointHandler]]] = {
         PlatformControl.type_name: PlatformControl,
         Backdoor.type_name: Backdoor,
+        Pipe.type_name: Pipe,
     }
+
+    #: Sidecar list written to the run directory for ``+pastel_sidecars``.
+    SIDECARS_FILE: ClassVar[str] = "sidecars.tsv"
 
     def __init__(self, device: Device, variant: Variant, options: Mapping[str, Any]) -> None:
         super().__init__(device, variant, options)
@@ -199,8 +203,11 @@ class VerilatorPlatform(SimulationPlatform):
         log_path = run_dir / "sim.log"
         self._log = open(log_path, "wb")
         args = [str(image.exe.resolve()), f"+pastel_host={self._listener.spec}"]
-        if remote:
-            args.append("+pastel_jtag_bind=0.0.0.0")
+        if self.sidecars:
+            (run_dir / self.SIDECARS_FILE).write_text(
+                "".join("\t".join([sc.name, sc.log, *sc.argv]) + "\n" for sc in self.sidecars)
+            )
+            args.append(f"+pastel_sidecars={self.SIDECARS_FILE}")  # relative to the run dir
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
         self._proc = self._launcher.launch(args, run_dir, self._log)
@@ -270,10 +277,3 @@ class VerilatorPlatform(SimulationPlatform):
             if e.type == Backdoor.type_name
         }
         return BackdoorMemory(self.variant, doors)  # type: ignore[arg-type]
-
-    def debug_connection(self) -> Mapping[str, Any]:  # noqa: D102
-        session = self.endpoints
-        port = session.hello.info.get("jtag_port")
-        # The JTAG server runs where the simulator does: the far end of the
-        # endpoint connection (127.0.0.1 for a local simulator).
-        return {"remote_bitbang": (session.peer, int(port))} if port else {}

@@ -210,6 +210,7 @@ class FakeSim(SimulationPlatform):
 
     def start(self):
         FakeSim.seen = dict(self.expected_endpoints)
+        FakeSim.sidecars_seen = list(self.sidecars)
 
     def stop(self):
         pass
@@ -231,3 +232,29 @@ def test_sim_platform_told_which_endpoints_to_expect():
     assert set(FakeSim.seen) == {"spi0"}
     assert FakeSim.seen["spi0"].type == "spi"
     assert FakeSim.seen["spi0"].handler_class is SpiVipHandler
+
+
+def test_sim_platform_given_interface_sidecars_before_start(tmp_path):
+    from soc_pastel.core import Sidecar
+    from soc_pastel.interfaces.on_chip_debug.openocd import OpenOcd
+
+    class SidecarSpi(FakeSpi):
+        impl_name: ClassVar[str] = "sidecar"
+
+        def sim_sidecars(self):
+            return [Sidecar("helper", ("helper", "--serve"), "helper.log")]
+
+    v = DEVICE.variant()
+    ocd_cfg = {"impl": "openocd", "transport": "remote_bitbang", "cpu": "veer", "chain": "x"}
+    ifaces = {"on_chip_debug": (OpenOcd, ocd_cfg), "spi0": (SidecarSpi, {"impl": "sidecar"})}
+    platform = FakeSim(DEVICE, v, {"run_dir": tmp_path})
+    harness = PlatformHarness(DEVICE, v, platform, ifaces)
+    with pytest.raises(NotImplementedError):  # OpenOCD reaches for the endpoints on open
+        harness.open()
+    names = [sc.name for sc in FakeSim.sidecars_seen]
+    assert names == ["on_chip_debug.openocd", "helper"]
+    ocd = FakeSim.sidecars_seen[0]
+    assert ocd.argv[1:] == ("-f", "openocd.cfg") and ocd.log == "openocd.log"
+    cfg = (tmp_path / "openocd.cfg").read_text()
+    assert "tcl port pipe" in cfg
+    assert "remote_bitbang host $::env(PASTEL_JTAG_SOCKET)" in cfg

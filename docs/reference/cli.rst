@@ -101,11 +101,14 @@ Set by PASTEL; listed for running a model by hand.
    * - ``+pastel_host=<host>:<port>:<token>``
      - Where to connect: a host name, IPv4 address or bracketed IPv6 address
        (``[fd00::1]``). Without it the model runs standalone.
+   * - ``+pastel_sidecars=<file>``
+     - Helper processes for the simulator to start, such as OpenOCD (see
+       :ref:`pastel-pipe`). Written by PASTEL to the run directory.
    * - ``+pastel_jtag_port=<n>``
-     - JTAG server port (default: any free port, reported in HELLO)
-   * - ``+pastel_jtag_bind=<addr>``
-     - Address the JTAG server listens on (default ``127.0.0.1``;
-       ``0.0.0.0`` for every interface, IPv4 and IPv6). Set with a launcher.
+     - Serve JTAG on TCP port ``n`` on loopback (``0``: any free port,
+       reported in HELLO as ``jtag_port``), for driving a model by hand with
+       your own OpenOCD. By default JTAG is served on a Unix socket, whose
+       path is exported to sidecars as ``PASTEL_JTAG_SOCKET``.
    * - ``+pastel_clk_period_ps=<n>``
      - Clock period of ``pastel_clock`` (default 20000, i.e. 50 MHz)
    * - ``+pastel_waves=<file>``
