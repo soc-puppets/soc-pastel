@@ -18,6 +18,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -44,9 +45,32 @@ Jtag j;
 
 void set_nonblock(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); }
 
+// Copies of the paths for the signal handler, which may not touch std::string.
+char sig_path[sizeof(sockaddr_un::sun_path)], sig_dir[sizeof(sockaddr_un::sun_path)];
+
 void cleanup() {
   if (!j.path.empty()) unlink(j.path.c_str());
   if (!j.dir.empty()) rmdir(j.dir.c_str());
+  sig_path[0] = sig_dir[0] = '\0';
+}
+
+// Ctrl-C reaches the simulator too. Remove the socket, then die of the same
+// signal as before. Only async-signal-safe calls here.
+void on_fatal_signal(int sig) {
+  if (sig_path[0]) unlink(sig_path);
+  if (sig_dir[0]) rmdir(sig_dir);
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+void remove_socket_on_signals() {
+  memcpy(sig_path, j.path.c_str(), j.path.size() + 1);
+  memcpy(sig_dir, j.dir.c_str(), j.dir.size() + 1);
+  for (int sig : {SIGINT, SIGTERM, SIGHUP}) {
+    struct sigaction old {};
+    sigaction(sig, nullptr, &old);
+    if (old.sa_handler == SIG_DFL) signal(sig, on_fatal_signal);  // never replace a simulator's own
+  }
 }
 
 std::string json_string(const std::string& s) {
@@ -96,6 +120,7 @@ int open_unix() {
   }
   j.path = j.dir + "/jtag.sock";
   atexit(cleanup);
+  remove_socket_on_signals();
   memcpy(a.sun_path, j.path.c_str(), j.path.size() + 1);
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(fd, 1) != 0) {
@@ -130,6 +155,12 @@ void pastel_jtag_tick(svBit tdo, svBit* tck, svBit* tms, svBit* tdi, svBit* trst
       fcntl(fd, F_SETFD, FD_CLOEXEC);
       set_nonblock(fd);
       j.fd = fd;
+      // OpenOCD is connected and won't reconnect, so the socket's path is no
+      // longer needed. Removing it now, not at exit, means a simulator killed
+      // outright (Ctrl-C reaches it too) leaves nothing behind in /tmp.
+      cleanup();
+      j.path.clear();
+      j.dir.clear();
     }
   }
   if (j.fd >= 0 && j.pos >= j.len) {

@@ -28,6 +28,11 @@ from .core.errors import ConfigurationError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
 
+try:  # pytest internals; see pytest_runtest_setup below
+    from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
+except ImportError:  # pragma: no cover - a pytest without the problem
+    _TMP_PATH_RESULTS = None
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Add PASTEL's options; platforms add their own via ``Platform.add_options``."""
@@ -75,6 +80,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             registry.platform(name).add_options(parser)
         except ConfigurationError:
             pass  # reported properly when the platform is selected
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Let Ctrl-C during fixture set-up end the run quietly.
+
+    pytest's ``tmp_path`` teardown reads per-phase results that pytest only
+    records once a phase has finished. Interrupted mid-set-up (building a
+    model, waiting for the simulator), the record is missing and pytest
+    prints a long internal ``KeyError`` traceback after its own short
+    ``KeyboardInterrupt`` notice. An empty record avoids that.
+    """
+    if _TMP_PATH_RESULTS is not None:
+        item.stash.setdefault(_TMP_PATH_RESULTS, {})
 
 
 def pytest_configure(config: pytest.Config) -> None:
