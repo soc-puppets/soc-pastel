@@ -1,6 +1,8 @@
-"""PASTEL's HDL avoids legal SystemVerilog that some simulators reject.
+"""PASTEL's own HDL avoids legal SystemVerilog that some simulators reject.
 
-See "Portable SystemVerilog" in the device-pack guide.
+Covers the HDL in this repository (PASTEL itself and the packs maintained
+here), so PASTEL works with whichever simulator a user picks. The list of
+constructs is in CONTRIBUTING.md.
 """
 
 import re
