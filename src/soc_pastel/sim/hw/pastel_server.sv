@@ -13,12 +13,15 @@
 //                                     to <file> from time 0. Needs a model
 //                                     compiled with +define+PASTEL_WAVES and
 //                                     the simulator's own tracing option.
+//                                     Xcelium records an SHM database
+//                                     ($recordfile); other simulators use
+//                                     $dumpfile (VCD, or FST with Verilator).
 //
 // It connects on the first clock edge, after every VIP has opened its
 // endpoint at time 0, so HELLO lists them all. It then polls every
 // POLL_CYCLES clocks and ends the simulation when the host asks. The host can
 // also pause and resume waveform dumping, on simulators that honour $dumpoff
-// and $dumpon; that takes effect at a poll. Verilator ignores both, so there
+// and $dumpon (or $recordoff and $recordon); that takes effect at a poll. Verilator ignores both, so there
 // a waveform always covers the whole run and the host is told so.
 
 module pastel_server #(
@@ -59,8 +62,15 @@ module pastel_server #(
 
   initial begin
     if ($value$plusargs("pastel_waves=%s", waves_file)) begin
+`ifdef XCELIUM
+      // SHM rather than VCD: far smaller and faster for a whole SoC, and what
+      // SimVision reads. No arguments: the whole design, as with $dumpvars.
+      $recordfile(waves_file);
+      $recordvars;
+`else
       $dumpfile(waves_file);
       $dumpvars;
+`endif
       waves = 1'b1;
       dumping = 1'b1;
       pastel_server_waves_init(CAN_PAUSE);  // tell the host waves exist, and are on
@@ -70,8 +80,13 @@ module pastel_server #(
   function automatic void update_waves();
     if (waves && (pastel_server_waves_on() != 0) != dumping) begin
       dumping = !dumping;
+`ifdef XCELIUM
+      if (dumping) $recordon;
+      else $recordoff;
+`else
       if (dumping) $dumpon;
       else $dumpoff;
+`endif
     end
   endfunction
 `else
