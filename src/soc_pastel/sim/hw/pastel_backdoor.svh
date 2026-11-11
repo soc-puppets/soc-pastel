@@ -35,7 +35,8 @@
             pastel_ep_rx_byte(pbd_h, at + 1), pastel_ep_rx_byte(pbd_h, at)}; \
   endfunction \
   always @(posedge CLK) begin \
-    while ((pbd_n = pastel_ep_rx_len(pbd_h)) >= 13) begin \
+    pbd_n = pastel_ep_rx_len(pbd_h); \
+    while (pbd_n >= 13) begin \
       automatic byte op = pastel_ep_rx_byte(pbd_h, 0); \
       automatic int seq = pbd_u32(1); \
       automatic longint unsigned off = longint'(unsigned'(pbd_u32(5))); \
@@ -55,6 +56,7 @@
       end \
       pastel_ep_tx_end(pbd_h); \
       pastel_ep_rx_pop(pbd_h); \
+      pbd_n = pastel_ep_rx_len(pbd_h); \
     end \
   end
 
