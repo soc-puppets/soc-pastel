@@ -366,6 +366,38 @@ For a memory with ECC, recompute the check bits for the affected word in
 deliberate blocking writes (Verilator's ``BLKSEQ``, for one); PASTEL's builds
 don't enable those warnings.
 
+GPIO
+~~~~
+
+``pastel_gpio`` is the far end of the chip's GPIO pins. From a test, through
+the ``gpio`` interface, it samples the pins, drives any of them to 0 or 1,
+and releases them. It has no ``inout`` port: give it the pins and let the
+testbench do the tristating:
+
+.. code-block:: systemverilog
+
+   wire  [15:0] gpio;                        // the chip's pads
+   logic [15:0] gpio_drive, gpio_drive_en;
+   pastel_gpio #(.NAME("gpio"), .WIDTH(16)) u_gpio (
+     .clk(clk), .pins(gpio), .drive(gpio_drive), .drive_en(gpio_drive_en));
+   for (genvar i = 0; i < 16; i++)
+     assign gpio[i] = gpio_drive_en[i] ? gpio_drive[i] : 1'bz;
+
+``NAME`` is the interface's instance name in the descriptor, and ``WIDTH``
+is 1 to 64; the test learns the width from the agent. The agent drives
+nothing until a test asks it to. Bind it for simulation:
+
+.. code-block:: python
+
+   interfaces={
+       ...,
+       "gpio": InterfaceBinding(type="gpio", impls={"sim": {"impl": "sim"}}),
+   }
+
+A chip with separate input and output pins rather than bidirectional pads
+can map them onto ``pins`` however suits; VeeRwolf's testbench gives the agent
+16 chip outputs to watch and 16 chip inputs to drive.
+
 .. _step-4-tell-pastel-how-to-build-it:
 
 Step 4: tell PASTEL how to build it
@@ -481,9 +513,9 @@ Later: other platforms
 
 FPGA and silicon support is added to the same pack: a variant for each build
 whose memory map differs, and on-chip debug bindings for the ``fpga`` and
-``silicon`` kinds (or for particular boards, by variant name). Interfaces
-other than on-chip debug (GPIO, SPI, UART) are bound the same way as their
-interface packs become available.
+``silicon`` kinds (or for particular boards, by variant name). Other
+interfaces are bound the same way, per platform: GPIO now, SPI and UART as
+their interface packs become available.
 
 Checklist
 ---------

@@ -97,6 +97,10 @@ Interfaces
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.interfaces.gpio.sim
+   :members:
+   :show-inheritance:
+
 .. automodule:: soc_pastel.interfaces.spi
    :members:
    :show-inheritance:

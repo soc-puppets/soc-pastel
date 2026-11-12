@@ -72,6 +72,19 @@ module pastel_veerwolf_tb;
 
   pastel_veerwolf_backdoor u_backdoor (.clk(clk));
 
+  // --- GPIO --------------------------------------------------------------------
+  // VeeRwolf's GPIO has separate inputs and outputs (syscon 0x10: writes set
+  // o_gpio, reads return i_gpio), not bidirectional pads. Model 32 pads:
+  // pins 15:0 are chip outputs, pins 31:16 chip inputs that the agent drives
+  // (low when it doesn't). All 32 read back through i_gpio.
+  logic [31:0] gpio_pads, gpio_drive, gpio_drive_en;
+  logic [63:0] chip_gpio_out;
+  pastel_gpio #(.NAME("gpio"), .WIDTH(32)) u_gpio (
+    .clk(clk), .pins(gpio_pads), .drive(gpio_drive), .drive_en(gpio_drive_en)
+  );
+  assign gpio_pads[15:0]  = chip_gpio_out[15:0];
+  assign gpio_pads[31:16] = gpio_drive[31:16] & gpio_drive_en[31:16];
+
   // --- SoC ----------------------------------------------------------------------
   /* verilator lint_off PINCONNECTEMPTY */
   veerwolf_core #(.clk_freq_hz(32'd50_000_000)) veerwolf (
@@ -92,7 +105,7 @@ module pastel_veerwolf_tb;
     .i_ram_rid(rid), .i_ram_rdata(rdata), .i_ram_rresp(rresp), .i_ram_rlast(rlast),
     .i_ram_rvalid(rvalid), .o_ram_rready(rready),
     .i_ram_init_done(1'b1), .i_ram_init_error(1'b0),
-    .i_gpio(64'd0), .o_gpio()
+    .i_gpio({32'd0, gpio_pads}), .o_gpio(chip_gpio_out)
   );
   /* verilator lint_on PINCONNECTEMPTY */
 

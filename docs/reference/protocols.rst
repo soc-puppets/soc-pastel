@@ -122,6 +122,33 @@ device descriptor.
 
 Offsets are bytes from the region base.
 
+``gpio``
+~~~~~~~~
+
+One ``pastel_gpio`` agent (``soc_pastel/interfaces/gpio/hw/pastel_gpio.sv``),
+named after the interface's instance. A request is applied at a rising clock
+edge and answered at the next falling edge, with the pins as they then are.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Message
+     - Direction
+     - Bytes
+   * - SAMPLE
+     - host → sim
+     - ``01``, u32 seq
+   * - DRIVE
+     - host → sim
+     - ``02``, u32 seq, u64 value, u64 mask
+   * - RELEASE
+     - host → sim
+     - ``03``, u32 seq, u64 mask
+   * - REPLY
+     - sim → host
+     - op \| ``80``, u32 seq, u8 width, u64 value, u64 unknown. ``value`` reads
+       X and Z pins as 0, and ``unknown`` marks them.
+
 .. _pastel-pipe:
 
 ``pastel.pipe``

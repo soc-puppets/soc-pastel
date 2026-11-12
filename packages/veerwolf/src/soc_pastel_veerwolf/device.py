@@ -145,7 +145,11 @@ VEERWOLF = Device(
                 },
             },
         ),
-        # GPIO, UART and SPI bindings arrive with their interface packs (Phase 4).
+        # The testbench's pastel_gpio agent: pins 15:0 are chip outputs (syscon
+        # GPIO register bits 15:0), pins 31:16 chip inputs (see the testbench).
+        # Absent on the FPGA, where nothing is wired to the pins.
+        "gpio": InterfaceBinding(type="gpio", impls={"sim": {"impl": "sim"}}),
+        # UART and SPI bindings arrive with their interface packs.
     },
     # VeeRwolf's data/veerwolf.rdl covers only part of the syscon; a register
     # model follows once it is extended to GPIO, timers, SPI and UART.

@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 SIM_HW = HDL_ROOT / "sim" / "hw"
 SIM_CSRC = HDL_ROOT / "sim" / "csrc"
 OCD_HW = HDL_ROOT / "interfaces" / "on_chip_debug" / "hw"
+GPIO_HW = HDL_ROOT / "interfaces" / "gpio" / "hw"
 
 #: PASTEL's own HDL and DPI C++, compiled into every Verilator model.
 PASTEL_HDL = [
@@ -41,6 +42,7 @@ PASTEL_HDL = [
     SIM_HW / "pastel_clock.sv",
     SIM_HW / "pastel_server.sv",
     OCD_HW / "pastel_jtag.sv",
+    GPIO_HW / "pastel_gpio.sv",
 ]
 PASTEL_CPP = [SIM_CSRC / "pastel_ep.cpp", OCD_HW / "pastel_jtag.cpp"]
 

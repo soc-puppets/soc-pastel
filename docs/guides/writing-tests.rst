@@ -157,6 +157,34 @@ Capabilities are interface instance names from the device descriptor
 
 .. _waves:
 
+Driving the chip's pins
+-----------------------
+
+Interfaces are reached by their instance name in the descriptor. GPIO
+samples, drives and releases pins, with bit ``n`` for pin ``n``:
+
+.. code-block:: python
+
+   from soc_pastel.interfaces.gpio import Gpio
+
+   @pytest.mark.requires("gpio")
+   def test_button_wakes_the_chip(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+
+       def on_checkpoint(cp):
+           if cp == 1:                      # firmware is waiting for the button
+               gpio.drive(1 << 4, 1 << 4)   # press it: pin 4 high
+           elif cp == 2:
+               gpio.release(1 << 4)
+
+       assert firmware.run("fw/wakeup.c", on_checkpoint=on_checkpoint).passed
+
+``drive`` and ``release`` return once the chip can see the change, so firmware
+released from a checkpoint, or a register read over debug, sees the new
+level. In simulation an X or Z pin samples as 0, and the simulation
+implementation's ``sample_unknown()`` says which pins those are. A 2-state
+simulator such as Verilator has no X or Z, so an undriven pin is just 0 there.
+
 Waveforms
 ---------
 

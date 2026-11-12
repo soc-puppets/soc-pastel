@@ -57,6 +57,10 @@ jobs:
         run: >
           pytest --pyargs soc_pastel.conformance
           --device=veerwolf --platform=verilator --code-location=${{ matrix.location }}
+      - name: VeeRwolf pack's simulation tests (GPIO)
+        run: >
+          pytest packages/veerwolf/tests/test_gpio.py
+          --device=veerwolf --platform=verilator --code-location=${{ matrix.location }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
