@@ -122,8 +122,14 @@ Build options
 ~~~~~~~~~~~~~
 
 ``firmware.build()`` and ``firmware.run()`` accept several sources, plus
-``include_dirs``, ``defines`` (strings such as ``"N_SAMPLES=16"``) and
-``stack_size``. Builds are cached by content under ``.pastel/firmware/``.
+``include_dirs`` (relative to the test file, like the sources), ``defines``
+(strings such as ``"N_SAMPLES=16"``) and ``stack_size``. Headers the device
+pack provides for every test, such as the chip's register map, come from the
+variant's ``fw_build`` hook (see :doc:`firmware`), so tests don't name them.
+
+Builds are cached under ``.pastel/firmware/`` by everything that goes into
+them: the sources, the headers in every include directory, the defines and
+the generated memory map. Regenerating a header rebuilds the firmware.
 
 Code locations
 ~~~~~~~~~~~~~~

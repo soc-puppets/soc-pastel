@@ -42,7 +42,7 @@ def test_key_covers_headers_in_include_directories(tmp_path):
 
 def test_key_covers_verilator_and_compiler_environment(tmp_path, monkeypatch):
     base = key(tmp_path)
-    assert key(tmp_path, verilator="/opt/verilator/v5.042/bin/verilator") != base
+    assert key(tmp_path, verilator="/no/such/dir/verilator") != base  # not what PATH finds
     monkeypatch.setenv("CXX", "/opt/gcc-12/bin/g++")
     assert key(tmp_path) != base
 

@@ -172,3 +172,7 @@ read.
 ``sim_sources``
    ``"module:function"`` returning
    :py:class:`~soc_pastel.sim.sources.SimSources`. Read by simulation platforms.
+``fw_build``
+   ``"module:function"`` taking the variant and returning
+   :py:class:`~soc_pastel.fw.build.FirmwareOptions`: include directories and
+   defines added to every firmware build. Read by the firmware builder.

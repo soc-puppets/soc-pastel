@@ -15,7 +15,7 @@ A test whose requirements the harness cannot meet is skipped, not failed.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -214,19 +214,54 @@ class Firmware:
         self.build_dir = build_dir
         self.location = harness.variant.code_location(location)
 
-    def build(self, *sources: str | Path, **kwargs: Any) -> Path:
-        """Compile sources with the PASTEL runtime; return the ELF path."""
+    def build(
+        self,
+        *sources: str | Path,
+        include_dirs: Iterable[str | Path] = (),
+        defines: Iterable[str] = (),
+        **kwargs: Any,
+    ) -> Path:
+        """Compile sources with the PASTEL runtime; return the ELF path.
+
+        ``include_dirs`` are relative to the test file, like the sources, and
+        searched after the variant's own (see its ``fw_build`` hook).
+        """
         from .fw.build import build_firmware
 
         h = self.harness
         paths = [self.test_dir / s for s in sources]
-        return build_firmware(h.device, h.variant, self.location, paths, self.build_dir, **kwargs)
+        dirs = [self.test_dir / d for d in include_dirs]
+        return build_firmware(
+            h.device,
+            h.variant,
+            self.location,
+            paths,
+            self.build_dir,
+            include_dirs=dirs,
+            defines=defines,
+            **kwargs,
+        )
 
-    def run(self, *sources: str | Path, timeout_s: float = 300.0, **kwargs: Any):
-        """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`."""
+    def run(
+        self,
+        *sources: str | Path,
+        include_dirs: Iterable[str | Path] = (),
+        defines: Iterable[str] = (),
+        stack_size: int | None = None,
+        timeout_s: float = 300.0,
+        **kwargs: Any,
+    ):
+        """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
+
+        ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; ``timeout_s``
+        and the rest (``on_checkpoint``, ...) to
+        :func:`~soc_pastel.fw.runner.run_firmware`.
+        """
         from .fw.runner import run_firmware
 
-        return run_firmware(self.harness, self.build(*sources), timeout_s=timeout_s, **kwargs)
+        build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
+        elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
+        return run_firmware(self.harness, elf, timeout_s=timeout_s, **kwargs)
 
 
 @pytest.fixture
