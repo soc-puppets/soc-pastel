@@ -46,6 +46,8 @@
 
 namespace {
 
+// Must match PROTOCOL_VERSION in soc_pastel/core/endpoints.py.
+constexpr int kProtocolVersion = 2;
 constexpr uint16_t kControl = 0xFFFF;
 constexpr uint32_t kMaxFrame = 16u * 1024u * 1024u;
 enum Kind : uint8_t { HELLO = 0, DATA = 1, ERROR = 2, BYE = 3, SYNC = 4, SYNC_ACK = 5 };
@@ -568,7 +570,8 @@ int pastel_server_connect(const char* spec, const char* sidecars) {
   fcntl(p.sock, F_SETFL, fcntl(p.sock, F_GETFL) | O_NONBLOCK);
   p.connected = true;
 
-  std::string j = "{\"version\":1,\"token\":\"" + json_escape(token) + "\",\"endpoints\":[";
+  std::string j = "{\"version\":" + std::to_string(kProtocolVersion) + ",\"token\":\"" +
+                  json_escape(token) + "\",\"endpoints\":[";
   for (size_t i = 0; i < p.eps.size(); i++) {
     const Endpoint& e = p.eps[i];
     if (i) j += ",";

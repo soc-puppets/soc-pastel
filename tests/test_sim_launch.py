@@ -10,6 +10,7 @@ import pytest
 from soc_pastel.core import ConfigurationError
 from soc_pastel.core.endpoints import (
     CONTROL_ENDPOINT,
+    PROTOCOL_VERSION,
     EndpointInfo,
     Frame,
     FrameKind,
@@ -103,7 +104,11 @@ def test_connect_timeout_defaults():
 def _hello(token):
     eps = (EndpointInfo(0, "platform", "pastel.platform", "tb"),)
     return encode_frame(
-        Frame(CONTROL_ENDPOINT, FrameKind.HELLO, Hello(1, token, eps, {"jtag_port": 9}).encode())
+        Frame(
+            CONTROL_ENDPOINT,
+            FrameKind.HELLO,
+            Hello(PROTOCOL_VERSION, token, eps, {"jtag_port": 9}).encode(),
+        )
     )
 
 

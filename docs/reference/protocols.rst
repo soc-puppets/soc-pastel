@@ -67,7 +67,7 @@ The simulator's first frame is HELLO:
 
 .. code-block:: json
 
-   {"version": 1, "token": "...",
+   {"version": 2, "token": "...",
     "endpoints": [{"id": 0, "name": "ram", "type": "pastel.backdoor", "path": "tb.u_backdoor"}],
     "info": {"jtag_socket": "/tmp/pastel-jtag-Ab12Cd/jtag.sock"}}
 

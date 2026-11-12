@@ -35,10 +35,14 @@ def test_bad_kind_rejected():
 
 
 def test_hello_round_trip_and_version_check():
-    h = Hello(1, "tok", (EndpointInfo(0, "spi0", "spi", "tb.u_spi0"),), {"openocd_tcl_port": 6666})
+    from soc_pastel.core.endpoints import PROTOCOL_VERSION
+
+    eps = (EndpointInfo(0, "spi0", "spi", "tb.u_spi0"),)
+    h = Hello(PROTOCOL_VERSION, "tok", eps, {"jtag_socket": "/tmp/x/jtag.sock"})
     assert Hello.decode(h.encode()) == h
-    with pytest.raises(ProtocolError, match="v2"):
-        Hello.decode(Hello(2, "tok", ()).encode())
+    # A model built from older PASTEL HDL fails at once, and says why.
+    with pytest.raises(ProtocolError, match="simulator speaks protocol v1, host speaks v2"):
+        Hello.decode(Hello(1, "tok", ()).encode())
 
 
 # --- Matching HELLO against the descriptor ------------------------------------------
@@ -62,7 +66,13 @@ class BackdoorHandler(EndpointHandler):
 
 
 def hello(*eps):
-    return Hello(1, "t", tuple(EndpointInfo(i, n, t, f"tb.{n}") for i, (n, t) in enumerate(eps)))
+    from soc_pastel.core.endpoints import PROTOCOL_VERSION
+
+    return Hello(
+        PROTOCOL_VERSION,
+        "t",
+        tuple(EndpointInfo(i, n, t, f"tb.{n}") for i, (n, t) in enumerate(eps)),
+    )
 
 
 EXPECT = {"spi0": ExpectedEndpoint("spi", SpiHandler)}

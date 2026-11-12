@@ -17,6 +17,7 @@ from soc_pastel.core.endpoints import (
     Frame,
     FrameKind,
     Hello,
+    ProtocolVersionError,
     decode_frames,
     encode_frame,
     match_hello,
@@ -152,6 +153,10 @@ class SocketEndpointSession(EndpointSession):
             self._hello = Hello.decode(first[0].payload)
         except UnexpectedPeer:
             raise
+        except ProtocolVersionError as e:
+            if e.hello.token != token:
+                raise UnexpectedPeer(f"stray simulator: {e}") from None
+            raise ProtocolError(str(e)) from None  # ours, but built from another PASTEL
         except (OSError, ProtocolError, ValueError, KeyError, TypeError) as e:
             raise UnexpectedPeer(f"no valid HELLO: {e}") from None
         if self._hello.token != token:

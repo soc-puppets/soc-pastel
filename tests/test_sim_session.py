@@ -9,6 +9,7 @@ import pytest
 from soc_pastel.core import CodeLocation, MemoryRegion, ProtocolError, Variant
 from soc_pastel.core.endpoints import (
     CONTROL_ENDPOINT,
+    PROTOCOL_VERSION,
     EndpointInfo,
     Frame,
     FrameKind,
@@ -25,13 +26,14 @@ HANDLERS = {"pastel.platform": PlatformControl, "pastel.backdoor": Backdoor}
 class FakeSim(threading.Thread):
     """Dials the listener, announces a RAM backdoor and the platform endpoint."""
 
-    def __init__(self, spec, token=None, size=0x1000):
+    def __init__(self, spec, token=None, size=0x1000, version=PROTOCOL_VERSION):
         super().__init__(daemon=True)
         host, port, tok = spec.split(":")
         self.addr, self.token = (host, int(port)), token or tok
         self.mem = bytearray(size)
         self.finished = threading.Event()
         self.waves = False
+        self.version = version
 
     def run(self):
         s = socket.create_connection(self.addr)
@@ -44,7 +46,7 @@ class FakeSim(threading.Thread):
                 Frame(
                     CONTROL_ENDPOINT,
                     FrameKind.HELLO,
-                    Hello(1, self.token, eps, {"jtag_port": 1234}).encode(),
+                    Hello(self.version, self.token, eps, {"jtag_port": 1234}).encode(),
                 )
             )
         )
@@ -119,5 +121,22 @@ def test_session_backdoor_time_sync_and_finish():
 def test_wrong_token_rejected():
     lst, _, conn = connect(token="nope")
     with pytest.raises(ProtocolError, match="token"):
+        SocketEndpointSession(conn, lst.token, {}, HANDLERS)
+    lst.close()
+
+
+def test_own_simulator_on_an_old_protocol_fails_clearly():
+    lst, _, conn = connect(version=PROTOCOL_VERSION - 1)
+    with pytest.raises(ProtocolError, match="speaks protocol v1, host speaks v2.*rebuild") as e:
+        SocketEndpointSession(conn, lst.token, {}, HANDLERS)
+    assert type(e.value).__name__ == "ProtocolError"  # fatal, not ignored as a stray
+    lst.close()
+
+
+def test_stray_simulator_on_an_old_protocol_is_ignored():
+    from soc_pastel.sim.session import UnexpectedPeer
+
+    lst, _, conn = connect(token="someone-elses", version=PROTOCOL_VERSION - 1)
+    with pytest.raises(UnexpectedPeer, match="stray"):
         SocketEndpointSession(conn, lst.token, {}, HANDLERS)
     lst.close()

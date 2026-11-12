@@ -25,7 +25,7 @@ All integers are little-endian. Each frame is::
 
 HELLO payload (simulator -> host, control endpoint) is UTF-8 JSON::
 
-    {"version": 1, "token": "...",
+    {"version": 2, "token": "...",
      "endpoints": [{"id": 0, "name": "spi0", "type": "spi", "path": "tb.u_spi0"}, ...],
      "info": {"jtag_socket": "/tmp/pastel-jtag-Ab12Cd/jtag.sock", ...}}
 
@@ -70,7 +70,11 @@ if TYPE_CHECKING:
     from .harness import PlatformHarness
 
 #: Protocol version carried in HELLO. Bump on any incompatible change.
-PROTOCOL_VERSION = 1
+#:
+#: 2: the simulator starts the sidecars named by ``+pastel_sidecars`` and
+#: relays them as ``pastel.pipe`` endpoints, serves JTAG on a Unix socket,
+#: and keeps running after FINISH until its sidecars exit.
+PROTOCOL_VERSION = 2
 
 #: Endpoint id used for HELLO, BYE and session-level ERROR frames.
 CONTROL_ENDPOINT = 0xFFFF
@@ -183,14 +187,27 @@ class Hello:
         except (ValueError, KeyError, TypeError) as e:
             raise ProtocolError(f"malformed HELLO: {e}") from None
         if hello.version != PROTOCOL_VERSION:
-            raise ProtocolError(
-                f"simulator speaks protocol v{hello.version}, host speaks v{PROTOCOL_VERSION}"
-            )
+            raise ProtocolVersionError(hello)
         ids = [e.id for e in hello.endpoints]
         names = [e.name for e in hello.endpoints]
         if len(set(ids)) != len(ids) or len(set(names)) != len(names) or CONTROL_ENDPOINT in ids:
             raise ProtocolError("HELLO endpoint ids/names must be unique and not 0xFFFF")
         return hello
+
+
+class ProtocolVersionError(ProtocolError):
+    """A simulator speaks another version of the protocol.
+
+    Usually a model built from another PASTEL's HDL and C++. Carries the
+    HELLO, so a host can tell its own simulator from a stray one by the token.
+    """
+
+    def __init__(self, hello: Hello) -> None:
+        super().__init__(
+            f"simulator speaks protocol v{hello.version}, host speaks v{PROTOCOL_VERSION}: "
+            "rebuild the model with this PASTEL"
+        )
+        self.hello = hello
 
 
 class EndpointHandler(ABC):
