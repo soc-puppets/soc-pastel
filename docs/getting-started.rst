@@ -35,13 +35,60 @@ On Ubuntu 24.04:
 Install and run the conformance suite
 -------------------------------------
 
-Until the first release on PyPI, install from the repository:
+Until the first release on PyPI, install from the repository.
+
+**Step 1: clone the repository.**
 
 .. code-block:: shell
 
    git clone https://github.com/soc-puppets/soc-pastel.git
    cd soc-pastel
-   pip install -e . -e packages/veerwolf
+
+**Step 2: create and activate a virtual environment.**
+
+.. code-block:: shell
+
+   python3 -m venv .venv
+   source .venv/bin/activate
+
+The virtual environment keeps PASTEL and its dependencies out of your system
+Python. The first command creates it once, in ``.venv``. The second selects it
+for the current shell, so run it again in every new terminal before using
+``pytest`` or ``pastel``. (In csh or tcsh, source ``.venv/bin/activate.csh``
+instead.)
+
+.. note::
+
+   The environment uses whichever Python created it, and PASTEL needs 3.10 or
+   newer. If ``python3 --version`` reports something older, name a newer
+   interpreter explicitly, e.g. ``python3.12 -m venv .venv``. An old Python
+   makes step 3 fail with a message about editable mode needing a
+   setuptools-based build.
+
+**Step 3: install the PASTEL core.**
+
+.. code-block:: shell
+
+   pip install -e .
+
+``-e`` installs in *editable* mode: Python uses the sources in your checkout
+directly, so changes take effect without reinstalling. Reinstall only when a
+``pyproject.toml`` changes.
+
+**Step 4: install a device pack.**
+
+.. code-block:: shell
+
+   pip install -e packages/veerwolf
+
+This is the pack for the VeeRwolf reference SoC, which lives in this
+repository. ``pastel list`` should now show the ``veerwolf`` device and the
+platforms it can run on.
+
+**Step 5: run the conformance suite.**
+
+.. code-block:: shell
+
    pytest --pyargs soc_pastel.conformance --device=veerwolf --platform=verilator
 
 The first run fetches VeeRwolf (pinned to a tested commit) and its

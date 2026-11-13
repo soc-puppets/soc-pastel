@@ -73,10 +73,13 @@ its HDL through entry points:
    HDL_ROOT: Path = Path(__file__).parent / "hw"
 
 A pack for a proprietary chip lives in that chip's private repository and is
-installed in development mode; it never needs publishing:
+installed in development mode; it never needs publishing. Install it into the
+same virtual environment as PASTEL (see :doc:`../getting-started`), with that
+environment activated:
 
 .. code-block:: shell
 
+   source .venv/bin/activate    # if not already active
    pip install -e path/to/my-chip-pastel
 
 .. admonition:: Checkpoint

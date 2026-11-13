@@ -26,6 +26,18 @@ Where the logs are
 pytest prints the temporary directory (``/tmp/pytest-of-$USER/...``) for failing
 tests.
 
+Installing
+----------
+
+**``pip install -e`` fails with** ``editable mode currently requires a setuptools-based build``.
+``pip`` belongs to a Python older than 3.10. Create the virtual environment
+with a newer interpreter (``python3.12 -m venv .venv``), activate it and
+install again.
+
+**``pytest`` doesn't recognise** ``--device``, **or** ``pastel`` **is not found.**
+The virtual environment PASTEL was installed into isn't active in this shell:
+``source .venv/bin/activate``.
+
 Building
 --------
 
