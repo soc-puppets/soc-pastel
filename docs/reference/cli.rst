@@ -20,10 +20,39 @@ pytest options
    * - ``--waves``
      - Dump waveforms from the start of each test, on platforms that can
        (see :ref:`waves`).
+   * - ``--sim-launcher=<template>``
+     - Run the simulator through a command: a prefix (``srun -p sim``) or a
+       template with ``{cmd}`` (``ssh simbox {cmd}``). See
+       :doc:`../guides/remote-simulation`.
+   * - ``--sim-launcher-class=<name>``
+     - Run the simulator with a :class:`~soc_pastel.sim.launch.SimLauncher`
+       plugin: a ``soc_pastel.launchers`` entry-point name or ``module:Class``.
+   * - ``--sim-host-address=<addr>``
+     - Address a remote simulator dials to reach the test machine (default:
+       its fully qualified host name). Only used with a launcher.
+   * - ``--sim-connect-timeout=<seconds>``
+     - How long to wait for the simulator to connect (default 120, or 3600
+       with a launcher).
+
+The ``--sim-*`` options apply to every simulation platform. Each platform
+also adds options of its own.
+
+Verilator platform (``--platform=verilator``):
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
    * - ``--verilator-workdir=<dir>``
      - Where Verilator models are built (default ``.pastel/verilator``).
    * - ``--verilator=<exe>``
      - The Verilator executable.
+   * - ``--verilator-args=<args>``
+     - Extra Verilator arguments, as one shell-quoted string, e.g.
+       ``"-CFLAGS -fcoroutines -LDFLAGS -Wl,-rpath,/opt/gcc/lib64"``. They
+       are part of the model's identity, so changing them builds a new
+       model.
 
 Markers
 -------
@@ -36,7 +65,10 @@ Fixtures
 --------
 
 ``harness``
-   An open :py:class:`~soc_pastel.core.harness.PlatformHarness`, per test.
+   A :py:class:`~soc_pastel.core.harness.PlatformHarness`, per test. The
+   platform starts when the test first uses the target, not before, so a test
+   that fails or skips first (a firmware compile error, say) starts no
+   simulator.
 ``firmware``
    Builds and runs firmware on that harness; sources are relative to the test
    file.
@@ -78,22 +110,33 @@ Environment variables
 Simulator plusargs
 ------------------
 
-Set by PASTEL; listed for running a model by hand.
+Set by PASTEL; listed for running a model by hand. They are read with
+``$value$plusargs``, so they work the same on any simulator.
 
 .. list-table::
    :header-rows: 1
 
    * - Plusarg
      - Meaning
-   * - ``+pastel_host=<ip>:<port>:<token>``
-     - Where to connect. Without it the model runs standalone.
+   * - ``+pastel_host=<host>:<port>:<token>``
+     - Where to connect: a host name, IPv4 address or bracketed IPv6 address
+       (``[fd00::1]``). Without it the model runs standalone.
+   * - ``+pastel_sidecars=<file>``
+     - Helper processes for the simulator to start, such as OpenOCD (see
+       :ref:`pastel-pipe`). Written by PASTEL to the run directory.
    * - ``+pastel_jtag_port=<n>``
-     - JTAG server port (default: any free port, reported in HELLO)
+     - Serve JTAG on TCP port ``n`` on loopback (``0``: any free port,
+       reported in HELLO as ``jtag_port``), for driving a model by hand with
+       your own OpenOCD. By default JTAG is served on a Unix socket, whose
+       path is exported to sidecars as ``PASTEL_JTAG_SOCKET``.
    * - ``+pastel_clk_period_ps=<n>``
      - Clock period of ``pastel_clock`` (default 20000, i.e. 50 MHz)
    * - ``+pastel_waves=<file>``
-     - Dump an FST waveform to ``<file>``. Needs a model built with waves
-       (an image whose name ends in ``-waves``).
+     - Dump a waveform of the whole testbench to ``<file>``, in the
+       simulator's own format. Needs a model compiled with
+       ``+define+PASTEL_WAVES`` and the simulator's tracing option. With
+       Verilator, that is the image whose name ends in ``-waves``, which
+       writes FST.
 
 Entry-point groups
 ------------------
@@ -116,6 +159,9 @@ Entry-point groups
    * - ``soc_pastel.hdl``
      - pack name
      - a ``Path`` containing FuseSoC cores
+   * - ``soc_pastel.launchers``
+     - launcher name
+     - a :class:`~soc_pastel.sim.launch.SimLauncher` subclass
 
 Variant parameters
 ------------------
@@ -126,3 +172,7 @@ read.
 ``sim_sources``
    ``"module:function"`` returning
    :py:class:`~soc_pastel.sim.sources.SimSources`. Read by simulation platforms.
+``fw_build``
+   ``"module:function"`` taking the variant and returning
+   :py:class:`~soc_pastel.fw.build.FirmwareOptions`: include directories and
+   defines added to every firmware build. Read by the firmware builder.

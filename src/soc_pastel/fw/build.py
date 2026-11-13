@@ -3,6 +3,15 @@
 The memory map is never written by hand: ``memory_map.h`` and the linker
 script are generated here from the device descriptor. CPU ports may add
 defines derived from the descriptor (the VeeR port computes MRAC).
+
+A variant can add include directories and defines to every firmware build,
+e.g. for the chip's generated register headers, by naming a hook in its
+params::
+
+    params={"fw_build": "my_pack.fw:fw_build"}
+
+    def fw_build(variant: Variant) -> FirmwareOptions:
+        return FirmwareOptions(include_dirs=(REPO / "sw" / "include",), defines=("CHIP_SIM=1",))
 """
 
 from __future__ import annotations
@@ -13,7 +22,8 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 
 from soc_pastel import FW_ROOT
@@ -23,6 +33,51 @@ from soc_pastel.core.util import file_lock
 
 #: Default stack size in bytes; override per build.
 DEFAULT_STACK_SIZE = 4096
+
+#: Files in include directories that are part of a build's identity.
+HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".inc"})
+
+
+@dataclass(frozen=True)
+class FirmwareOptions:
+    """Extra build options a variant's ``fw_build`` hook adds to every firmware build.
+
+    Attributes:
+        include_dirs: Searched after PASTEL's own headers and before a test's.
+        defines: ``NAME`` or ``NAME=value``, passed as ``-D``.
+    """
+
+    include_dirs: tuple[Path, ...] = field(default_factory=tuple)
+    defines: tuple[str, ...] = field(default_factory=tuple)
+
+
+def variant_options(variant: Variant) -> FirmwareOptions:
+    """Call the variant's ``fw_build`` hook, if it has one."""
+    ref = variant.params.get("fw_build")
+    if ref is None:
+        return FirmwareOptions()
+    if not isinstance(ref, str) or ":" not in ref:
+        raise ConfigurationError(
+            f"variant {variant.name!r}: 'fw_build' must be 'module:function', not {ref!r}"
+        )
+    module, _, attr = ref.partition(":")
+    options = getattr(import_module(module), attr)(variant)
+    if not isinstance(options, FirmwareOptions):
+        raise ConfigurationError(f"{ref} returned {type(options).__name__}, not FirmwareOptions")
+    return options
+
+
+def _headers(dirs: Iterable[Path]) -> list[Path]:
+    """Every header under each include directory, in a stable order.
+
+    Recursive, because headers are usually included with a directory prefix
+    (``#include "pastel/mailbox.h"``).
+    """
+    found: list[Path] = []
+    for d in dict.fromkeys(dirs):  # unique, in order
+        if d.is_dir():
+            found += sorted(f for f in d.rglob("*") if f.suffix in HEADER_SUFFIXES and f.is_file())
+    return found
 
 
 def _ident(name: str) -> str:
@@ -163,6 +218,11 @@ def build_firmware(
     tc = toolchain or Toolchain()
     sources = [Path(s).resolve() for s in sources]
     all_sources = runtime_sources(device) + sources
+    extra = variant_options(variant)
+    defines = [*extra.defines, *defines]
+    # Search order: generated header, PASTEL's own, the variant's, the test's.
+    pastel_dirs = [FW_ROOT / "include", FW_ROOT / "runtime"]
+    user_dirs = [Path(d).resolve() for d in (*extra.include_dirs, *include_dirs)]
     header = memory_map_header(device, variant)
     script = linker_script(variant, location, stack_size)
     flags = [
@@ -187,6 +247,13 @@ def build_firmware(
     for src in all_sources:
         h.update(str(src).encode())
         h.update(src.read_bytes())
+    # Include directories and their headers: a regenerated register header
+    # must rebuild the firmware, not reuse a stale ELF.
+    for d in user_dirs:
+        h.update(f"-I{d}".encode())
+    for header_file in _headers([*pastel_dirs, *user_dirs]):
+        h.update(str(header_file).encode())
+        h.update(header_file.read_bytes())
     stem = (sources[0].stem if sources else "firmware") + f"-{location.name}"
     work = out_dir / f"{stem}-{h.hexdigest()[:12]}"
     elf = work / f"{stem}.elf"
@@ -195,7 +262,7 @@ def build_firmware(
     with file_lock(work.with_suffix(".lock")):  # parallel test workers share builds
         if elf.is_file():
             return elf
-        _compile(tc, flags, header, script, all_sources, include_dirs, work, elf)
+        _compile(tc, flags, header, script, all_sources, [*pastel_dirs, *user_dirs], work, elf)
     return elf
 
 
@@ -213,7 +280,7 @@ def _compile(
     gen.mkdir(parents=True, exist_ok=True)
     (gen / "memory_map.h").write_text(header)
     (gen / "link.ld").write_text(script)
-    incs = [gen, FW_ROOT / "include", FW_ROOT / "runtime", *map(Path, include_dirs)]
+    incs = [gen, *include_dirs]
     cmd = [
         tc.tool("gcc"),
         *flags,

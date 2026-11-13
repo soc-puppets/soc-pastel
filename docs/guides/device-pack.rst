@@ -243,7 +243,8 @@ The OpenOCD configuration is assembled from three parts:
 
 ``transport``
    How JTAG reaches the chip. In simulation always ``remote_bitbang``; PASTEL
-   fills in the port.
+   runs OpenOCD beside the simulator and points it at the testbench's JTAG
+   socket.
 ``cpu``
    Debug-module settings for the CPU family. ``veer`` selects system-bus memory
    access with abstract access as a fallback, exposes VeeR's ``dmst`` CSR, and
@@ -361,9 +362,41 @@ rest. This one serves a RAM split into two banks interleaved by 32-bit word:
    endmodule
 
 For a memory with ECC, recompute the check bits for the affected word in
-``pastel_bd_write``. Use one backdoor per module. Verilator's ``-Wall`` reports
-the deliberate blocking writes (``BLKSEQ``); PASTEL's build does not enable
-those warnings.
+``pastel_bd_write``. Use one backdoor per module. Lint tools may flag the
+deliberate blocking writes (Verilator's ``BLKSEQ``, for one); PASTEL's builds
+don't enable those warnings.
+
+GPIO
+~~~~
+
+``pastel_gpio`` is the far end of the chip's GPIO pins. From a test, through
+the ``gpio`` interface, it samples the pins, drives any of them to 0 or 1,
+and releases them. It has no ``inout`` port: give it the pins and let the
+testbench do the tristating:
+
+.. code-block:: systemverilog
+
+   wire  [15:0] gpio;                        // the chip's pads
+   logic [15:0] gpio_drive, gpio_drive_en;
+   pastel_gpio #(.NAME("gpio"), .WIDTH(16)) u_gpio (
+     .clk(clk), .pins(gpio), .drive(gpio_drive), .drive_en(gpio_drive_en));
+   for (genvar i = 0; i < 16; i++)
+     assign gpio[i] = gpio_drive_en[i] ? gpio_drive[i] : 1'bz;
+
+``NAME`` is the interface's instance name in the descriptor, and ``WIDTH``
+is 1 to 64; the test learns the width from the agent. The agent drives
+nothing until a test asks it to. Bind it for simulation:
+
+.. code-block:: python
+
+   interfaces={
+       ...,
+       "gpio": InterfaceBinding(type="gpio", impls={"sim": {"impl": "sim"}}),
+   }
+
+A chip with separate input and output pins rather than bidirectional pads
+can map them onto ``pins`` however suits; VeeRwolf's testbench gives the agent
+16 chip outputs to watch and 16 chip inputs to drive.
 
 .. _step-4-tell-pastel-how-to-build-it:
 
@@ -372,8 +405,9 @@ Step 4: tell PASTEL how to build it
 
 The variant's ``sim_sources`` parameter names a function returning a
 :py:class:`~soc_pastel.sim.sources.SimSources`: the testbench top and the
-arguments that compile it. PASTEL adds its own HDL and C++, then builds with
-Verilator.
+arguments that compile it. PASTEL adds its own HDL and C++, then compiles
+everything with the simulator the platform uses. Keep the arguments
+simulator-neutral, so the same hook serves every simulation platform.
 
 If your flow already has a file list, the hook can be a few lines:
 
@@ -404,10 +438,25 @@ If your flow already has a file list, the hook can be a few lines:
        return SimSources(top="my_chip_tb", args=tuple(args))
 
 Arguments are file paths (absolute), ``+incdir+<dir>``, ``-D<name>[=<value>]``,
-and Verilator configuration files (``.vlt``). ``workdir`` is yours to use for any
-set-up, such as generating files. VeeRwolf's hook uses it to let FuseSoC
-generate the VeeR configuration and resolve dependencies; see
-``soc_pastel_veerwolf/sim.py``.
+and simulator-specific configuration files such as Verilator's ``.vlt``,
+which other simulators ignore. Arguments for one simulator only go in
+``tool_args``, keyed by platform name, e.g.
+``tool_args={"verilator": ("-CFLAGS", "-fcoroutines")}``.
+
+``workdir`` is yours to use for any set-up, such as generating files.
+VeeRwolf's hook uses it to let FuseSoC generate the VeeR configuration and
+resolve dependencies; see ``soc_pastel_veerwolf/sim.py``.
+
+If the sources differ between simulators, for example a behavioural model
+that only one simulator can compile, give the hook a ``platform`` keyword
+argument. PASTEL then passes the platform's name, so one variant serves every
+simulator:
+
+.. code-block:: python
+
+   def sim_sources(workdir: Path, platform: str = "verilator") -> SimSources:
+       flags = ["--flag=behavioural_models"] if platform == "verilator" else []
+       ...
 
 The model is rebuilt only when a listed file's content changes (ignoring
 comment-only lines, which generators often timestamp). ``key`` adds anything
@@ -421,7 +470,8 @@ else that should force a rebuild, such as an upstream commit.
 
       pytest --pyargs soc_pastel.conformance -k test_debug --device=my_chip --platform=verilator
 
-   The first run builds the model; its log is
+   The first run builds the model. Its log is ``build.log`` in the platform's
+   build directory; for Verilator,
    ``.pastel/verilator/images/<top>-<hash>/build.log``. Then, in order:
 
    1. The simulator connects and its endpoints match the descriptor. A mismatch
@@ -463,9 +513,9 @@ Later: other platforms
 
 FPGA and silicon support is added to the same pack: a variant for each build
 whose memory map differs, and on-chip debug bindings for the ``fpga`` and
-``silicon`` kinds (or for particular boards, by variant name). Interfaces
-other than on-chip debug (GPIO, SPI, UART) are bound the same way as their
-interface packs become available.
+``silicon`` kinds (or for particular boards, by variant name). Other
+interfaces are bound the same way, per platform: GPIO now, SPI and UART as
+their interface packs become available.
 
 Checklist
 ---------

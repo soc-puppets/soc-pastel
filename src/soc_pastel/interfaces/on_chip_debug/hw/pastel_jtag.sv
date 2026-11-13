@@ -2,7 +2,11 @@
 //
 // pastel_jtag: JTAG driven by OpenOCD over remote_bitbang (pastel_jtag.cpp).
 // Instantiate once in the testbench and connect to the chip's JTAG pins.
-// Optional plusarg: +pastel_jtag_port=<n> (default: any free port).
+// Serves JTAG on a Unix socket for OpenOCD running beside the simulator.
+// Optional plusarg: +pastel_jtag_port=<n> to serve it on TCP port n on
+// loopback instead (0: any free port), for use with your own OpenOCD.
+// TRST is held asserted until the debugger releases it, so the TAP starts in
+// reset rather than in an unknown state.
 
 module pastel_jtag (
   input  logic clk,
@@ -15,8 +19,8 @@ module pastel_jtag (
   import "DPI-C" function int pastel_jtag_open(input int port);
   import "DPI-C" function void pastel_jtag_tick(input bit tdo, output bit tck, output bit tms,
                                                 output bit tdi, output bit trst_n);
-  bit tck_b, tms_b, tdi_b, trst_n_b = 1'b1;
-  int port = 0;
+  bit tck_b, tms_b, tdi_b, trst_n_b = 1'b0;  // TAP in reset until OpenOCD releases it
+  int port = -1;  // Unix socket
 
   initial begin
     void'($value$plusargs("pastel_jtag_port=%d", port));

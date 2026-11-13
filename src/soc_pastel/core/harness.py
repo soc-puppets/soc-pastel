@@ -7,6 +7,12 @@ through it, which is what lets the same test run on every platform.
 Lifecycle: the harness opens the platform, then on-chip debug, then every
 other interface; it closes them in reverse order. Opening on-chip debug first
 means other interfaces may rely on it.
+
+The harness opens itself on first use: the first access to :attr:`platform`,
+:attr:`ocd`, :meth:`iface`, :meth:`memory` or :attr:`regs`. Starting a
+simulation can be slow, or cost a batch job, so nothing starts for a test that
+fails, or skips, before touching the target. A firmware test's compile errors
+show up before any simulator runs. ``with harness:`` opens it straight away.
 """
 
 from __future__ import annotations
@@ -50,7 +56,9 @@ class PlatformHarness:
     ) -> None:
         self.device = device
         self.variant = variant
-        self.platform = platform
+        self._platform = platform
+        self._state = "new"  # -> "opening" -> "open" -> "closed"
+        self._started = False  # platform.start() has been called
         self._interfaces: dict[str, Interface] = {
             name: cls(name, cfg, self) for name, (cls, cfg) in interfaces.items()
         }
@@ -60,12 +68,22 @@ class PlatformHarness:
         if not isinstance(self._interfaces.get(ON_CHIP_DEBUG), OnChipDebug):
             raise CapabilityError(f"harness needs an {ON_CHIP_DEBUG!r} interface")
 
+    @property
+    def platform(self) -> Platform:
+        """The platform, started if the harness hasn't been opened yet."""
+        self._open_on_first_use()
+        return self._platform
+
+    def _open_on_first_use(self) -> None:
+        if self._state == "new":
+            self.open()
+
     # -- Capabilities ---------------------------------------------------------
 
     @property
     def capabilities(self) -> frozenset[str]:
         """Platform features plus the instance name of every bound interface."""
-        return self.platform.capabilities() | frozenset(self._interfaces)
+        return self._platform.capabilities() | frozenset(self._interfaces)
 
     def has(self, *capabilities: str) -> bool:
         """Return True if the harness offers every named capability."""
@@ -76,7 +94,7 @@ class PlatformHarness:
         missing = sorted(set(capabilities) - self.capabilities)
         if missing:
             raise CapabilityError(
-                f"{', '.join(missing)} not available on {self.platform.name} "
+                f"{', '.join(missing)} not available on {self._platform.name} "
                 f"({self.device.name}/{self.variant.name})"
             )
 
@@ -91,6 +109,7 @@ class PlatformHarness:
                 e.g. ``harness.iface("spi0", SpiEndpoint)``.
         """
         self.require(name)
+        self._open_on_first_use()
         inst = self._interfaces[name]
         if not isinstance(inst, expected):
             raise CapabilityError(f"{name!r} is a {inst.type_name}, not a {expected.__name__}")
@@ -113,8 +132,9 @@ class PlatformHarness:
         The backdoor when the platform has one and ``prefer_backdoor`` is set,
         otherwise memory access through on-chip debug.
         """
+        self._open_on_first_use()
         if prefer_backdoor:
-            backdoor = self.platform.backdoor()
+            backdoor = self._platform.backdoor()
             if backdoor is not None:
                 return backdoor
         return self.ocd.memory
@@ -125,22 +145,36 @@ class PlatformHarness:
         if self._register_model_factory is None:
             raise CapabilityError(f"device {self.device.name!r} has no register model")
         if self._register_model is None:
+            self._open_on_first_use()
             self._register_model = self._register_model_factory(self)
         return self._register_model
 
     # -- Lifecycle --------------------------------------------------------------
 
     def open(self) -> None:
-        """Start the platform, then open on-chip debug and the other interfaces."""
-        if isinstance(self.platform, SimulationPlatform):
-            self.platform.expected_endpoints = {
+        """Start the platform, then open on-chip debug and the other interfaces.
+
+        Does nothing if the harness is already open. A harness that has been
+        closed, or failed to open, is not opened again.
+        """
+        if self._state != "new":
+            return
+        self._state = "opening"  # interfaces reach self.platform while opening
+        platform = self._platform
+        if isinstance(platform, SimulationPlatform):
+            platform.expected_endpoints = {
                 name: ExpectedEndpoint(type(inst).announced_type(), type(inst).handler_class)
                 for name, inst in self._interfaces.items()
                 if isinstance(inst, EndpointBacked)
             }
-        self.platform.start()
-        order = [ON_CHIP_DEBUG] + [n for n in self._interfaces if n != ON_CHIP_DEBUG]
         try:
+            if isinstance(platform, SimulationPlatform):
+                platform.sidecars = [
+                    sidecar for inst in self._interfaces.values() for sidecar in inst.sim_sidecars()
+                ]
+            self._started = True
+            platform.start()
+            order = [ON_CHIP_DEBUG] + [n for n in self._interfaces if n != ON_CHIP_DEBUG]
             for name in order:
                 inst = self._interfaces[name]
                 inst.open()
@@ -148,9 +182,16 @@ class PlatformHarness:
         except BaseException:
             self.close()
             raise
+        self._state = "open"
 
     def close(self) -> None:
-        """Close interfaces in reverse order, then stop the platform. Idempotent."""
+        """Close interfaces in reverse order, then stop the platform. Idempotent.
+
+        A harness that was never opened has nothing to stop.
+        """
+        self._state = "closed"
+        if not self._started:
+            return
         errors: list[BaseException] = []
         while self._open:
             try:
@@ -158,7 +199,7 @@ class PlatformHarness:
             except Exception as e:  # keep closing the rest
                 errors.append(e)
         try:
-            self.platform.stop()
+            self._platform.stop()
         except Exception as e:
             errors.append(e)
         if errors:

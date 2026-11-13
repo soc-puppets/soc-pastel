@@ -6,6 +6,7 @@ import logging
 import secrets
 import socket
 import threading
+import time
 from collections.abc import Mapping
 
 from soc_pastel.core.endpoints import (
@@ -16,6 +17,7 @@ from soc_pastel.core.endpoints import (
     Frame,
     FrameKind,
     Hello,
+    ProtocolVersionError,
     decode_frames,
     encode_frame,
     match_hello,
@@ -25,31 +27,62 @@ from soc_pastel.core.errors import PastelTimeout, ProtocolError
 log = logging.getLogger(__name__)
 
 
+def _tune(conn: socket.socket) -> None:
+    """Low latency, and keepalives so an idle link through a firewall survives."""
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for opt, value in (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 15), ("TCP_KEEPCNT", 8)):
+        if hasattr(socket, opt):
+            conn.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), value)
+
+
+class UnexpectedPeer(ProtocolError):
+    """A connection that is not the simulator we launched (no HELLO, wrong token)."""
+
+
 class Listener:
     """A listening socket the simulator dials back to.
+
+    Args:
+        bind: Local address to listen on. ``"127.0.0.1"`` (the default) for a
+            simulator on this machine; ``""`` for every interface.
+        advertise: Address the simulator should dial, as it would resolve it:
+            a name or an IP address. Defaults to ``bind`` when that is a
+            single address.
 
     Attributes:
         token: Random token the simulator must present in HELLO.
         spec: Value for the ``+pastel_host`` plusarg.
     """
 
-    def __init__(self, host: str = "127.0.0.1") -> None:
-        self._sock = socket.create_server((host, 0))
+    def __init__(self, bind: str = "127.0.0.1", advertise: str | None = None) -> None:
+        if bind in ("", "::", "0.0.0.0"):
+            if socket.has_dualstack_ipv6():
+                self._sock = socket.create_server(
+                    ("::", 0), family=socket.AF_INET6, dualstack_ipv6=True
+                )
+            else:
+                self._sock = socket.create_server(("0.0.0.0", 0))
+            if not advertise:
+                advertise = socket.getfqdn()
+        else:
+            self._sock = socket.create_server((bind, 0))
+            advertise = advertise or bind
         self.token = secrets.token_hex(8)
-        port = self._sock.getsockname()[1]
-        self.spec = f"{host}:{port}:{self.token}"
+        self.port = self._sock.getsockname()[1]
+        host = f"[{advertise}]" if ":" in advertise else advertise
+        self.spec = f"{host}:{self.port}:{self.token}"
 
     def accept(self, timeout_s: float, alive: callable = lambda: True) -> socket.socket:
         """Wait for the simulator to connect, giving up if ``alive()`` turns false."""
         self._sock.settimeout(0.5)
-        waited = 0.0
-        while waited < timeout_s:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
             try:
                 conn, _ = self._sock.accept()
-                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                _tune(conn)
                 return conn
             except TimeoutError:
-                waited += 0.5
                 if not alive():
                     raise ProtocolError("simulator exited before connecting") from None
         raise PastelTimeout(f"simulator did not connect within {timeout_s:.0f} s")
@@ -57,6 +90,39 @@ class Listener:
     def close(self) -> None:
         """Stop listening."""
         self._sock.close()
+
+
+def accept_session(
+    listener: Listener,
+    timeout_s: float,
+    expected: Mapping[str, ExpectedEndpoint],
+    platform_handlers: Mapping[str, type[EndpointHandler]],
+    alive: callable = lambda: True,
+) -> SocketEndpointSession:
+    """Accept connections until the simulator says HELLO with the right token.
+
+    A listener open to the network may be reached by something else first
+    (a port scanner, a stale simulator from an earlier run); those connections
+    are logged and dropped rather than failing the test.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        conn = listener.accept(max(deadline - time.monotonic(), 0.0), alive)
+        try:
+            peer = conn.getpeername()[0]
+        except OSError:
+            peer = "?"
+        try:
+            return SocketEndpointSession(
+                conn,
+                listener.token,
+                expected,
+                platform_handlers,
+                hello_timeout_s=min(60.0, max(deadline - time.monotonic(), 5.0)),
+            )
+        except UnexpectedPeer as e:
+            log.warning("ignored a connection from %s: %s", peer, e)
+            conn.close()
 
 
 class SocketEndpointSession(EndpointSession):
@@ -80,12 +146,21 @@ class SocketEndpointSession(EndpointSession):
         self.error: str | None = None
 
         conn.settimeout(hello_timeout_s)
-        first = self._read_frames(block=True)
-        if not first or first[0].kind is not FrameKind.HELLO:
-            raise ProtocolError("simulator did not start with HELLO")
-        self._hello = Hello.decode(first[0].payload)
+        try:
+            first = self._read_frames(block=True)
+            if not first or first[0].kind is not FrameKind.HELLO:
+                raise UnexpectedPeer("peer did not start with HELLO")
+            self._hello = Hello.decode(first[0].payload)
+        except UnexpectedPeer:
+            raise
+        except ProtocolVersionError as e:
+            if e.hello.token != token:
+                raise UnexpectedPeer(f"stray simulator: {e}") from None
+            raise ProtocolError(str(e)) from None  # ours, but built from another PASTEL
+        except (OSError, ProtocolError, ValueError, KeyError, TypeError) as e:
+            raise UnexpectedPeer(f"no valid HELLO: {e}") from None
         if self._hello.token != token:
-            raise ProtocolError("simulator presented the wrong session token")
+            raise UnexpectedPeer("simulator presented the wrong session token")
         classes = match_hello(self._hello, expected, platform_handlers)
         self._handlers: dict[str, EndpointHandler] = {}
         self._by_id: dict[int, EndpointHandler] = {}

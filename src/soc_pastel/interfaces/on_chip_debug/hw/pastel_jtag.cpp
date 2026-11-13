@@ -1,20 +1,33 @@
 // SPDX-License-Identifier: MIT
 //
 // JTAG for simulation: an OpenOCD remote_bitbang server driven from the
-// pastel_jtag module. It listens on an ephemeral port (or +pastel_jtag_port)
-// and reports the port to the host in the endpoint HELLO as "jtag_port".
+// pastel_jtag module.
+//
+// By default it listens on a Unix socket in a private directory under
+// $TMPDIR (or /tmp), exports the path to child processes as
+// PASTEL_JTAG_SOCKET and reports it in the endpoint HELLO as "jtag_socket".
+// PASTEL runs OpenOCD as a sidecar of the simulator, so it inherits the
+// variable; JTAG never leaves the machine the simulator runs on.
+//
+// With +pastel_jtag_port=<n> it listens on TCP port n on loopback instead
+// (0 picks a free port), reported in HELLO as "jtag_port", for driving a
+// model by hand with your own OpenOCD.
+//
 // One bitbang command is applied per call, so TCK runs at most at half the
 // rate pastel_jtag is clocked.
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "pastel_sim.h"
@@ -25,35 +38,115 @@ struct Jtag {
   int listen_fd = -1, fd = -1;
   unsigned char buf[4096];
   int len = 0, pos = 0;
-  svBit tck = 0, tms = 0, tdi = 0, trst_n = 1;
+  // TRST starts asserted, as in lowRISC's jtagdpi: a TAP reset only by TRST
+  // (VeeR's rvjtag_tap, for one) is then in a known state before OpenOCD
+  // connects, rather than X in a 4-state simulator. OpenOCD releases it.
+  svBit tck = 0, tms = 0, tdi = 0, trst_n = 0;
+  std::string dir, path;  // Unix socket, removed at exit
 };
 Jtag j;
 
 void set_nonblock(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); }
-}  // namespace
 
-extern "C" {
+// Copies of the paths for the signal handler, which may not touch std::string.
+char sig_path[sizeof(sockaddr_un::sun_path)], sig_dir[sizeof(sockaddr_un::sun_path)];
 
-// Start listening. port 0 picks a free port. Returns the port, or -1.
-int pastel_jtag_open(int port) {
-  j.listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+void cleanup() {
+  if (!j.path.empty()) unlink(j.path.c_str());
+  if (!j.dir.empty()) rmdir(j.dir.c_str());
+  sig_path[0] = sig_dir[0] = '\0';
+}
+
+// Ctrl-C reaches the simulator too. Remove the socket, then die of the same
+// signal as before. Only async-signal-safe calls here.
+void on_fatal_signal(int sig) {
+  if (sig_path[0]) unlink(sig_path);
+  if (sig_dir[0]) rmdir(sig_dir);
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+void remove_socket_on_signals() {
+  memcpy(sig_path, j.path.c_str(), j.path.size() + 1);
+  memcpy(sig_dir, j.dir.c_str(), j.dir.size() + 1);
+  for (int sig : {SIGINT, SIGTERM, SIGHUP}) {
+    struct sigaction old {};
+    sigaction(sig, nullptr, &old);
+    if (old.sa_handler == SIG_DFL) signal(sig, on_fatal_signal);  // never replace a simulator's own
+  }
+}
+
+std::string json_string(const std::string& s) {
+  std::string o = "\"";
+  for (char c : s) {
+    if (c == '"' || c == '\\') o.push_back('\\');
+    o.push_back(c);
+  }
+  return o + "\"";
+}
+
+int open_tcp(int port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
   int one = 1;
-  setsockopt(j.listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
   sockaddr_in a{};
   a.sin_family = AF_INET;
   a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   a.sin_port = htons(uint16_t(port));
-  if (bind(j.listen_fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 ||
-      listen(j.listen_fd, 1) != 0) {
-    fprintf(stderr, "pastel_jtag: cannot listen: %s\n", strerror(errno));
+  if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(fd, 1) != 0) {
+    fprintf(stderr, "pastel_jtag: cannot listen on port %d: %s\n", port, strerror(errno));
+    close(fd);
     return -1;
   }
   socklen_t al = sizeof a;
-  getsockname(j.listen_fd, reinterpret_cast<sockaddr*>(&a), &al);
+  getsockname(fd, reinterpret_cast<sockaddr*>(&a), &al);
+  pastel_sim_info("jtag_port", std::to_string(ntohs(a.sin_port)).c_str());
+  return fd;
+}
+
+int open_unix() {
+  sockaddr_un a{};
+  a.sun_family = AF_UNIX;
+  const char* tmp = getenv("TMPDIR");
+  for (const char* base : {tmp, "/tmp"}) {
+    if (!base || !*base) continue;
+    std::string tmpl = std::string(base) + "/pastel-jtag-XXXXXX";
+    if (tmpl.size() + 10 >= sizeof a.sun_path) continue;  // room for "/jtag.sock"
+    if (mkdtemp(tmpl.data())) {
+      j.dir = tmpl;
+      break;
+    }
+  }
+  if (j.dir.empty()) {
+    fprintf(stderr, "pastel_jtag: cannot create a socket directory: %s\n", strerror(errno));
+    return -1;
+  }
+  j.path = j.dir + "/jtag.sock";
+  atexit(cleanup);
+  remove_socket_on_signals();
+  memcpy(a.sun_path, j.path.c_str(), j.path.size() + 1);
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || listen(fd, 1) != 0) {
+    fprintf(stderr, "pastel_jtag: cannot listen on %s: %s\n", j.path.c_str(), strerror(errno));
+    close(fd);
+    return -1;
+  }
+  setenv("PASTEL_JTAG_SOCKET", j.path.c_str(), 1);
+  pastel_sim_info("jtag_socket", json_string(j.path).c_str());
+  return fd;
+}
+}  // namespace
+
+extern "C" {
+
+// Start listening: on TCP port `port` on loopback (0 picks one), or on a
+// Unix socket if port is negative. Returns 0, or -1 on failure.
+int pastel_jtag_open(int port) {
+  j.listen_fd = port >= 0 ? open_tcp(port) : open_unix();
+  if (j.listen_fd < 0) return -1;
+  fcntl(j.listen_fd, F_SETFD, FD_CLOEXEC);
   set_nonblock(j.listen_fd);
-  int actual = ntohs(a.sin_port);
-  pastel_sim_info("jtag_port", std::to_string(actual).c_str());
-  return actual;
+  return 0;
 }
 
 void pastel_jtag_tick(svBit tdo, svBit* tck, svBit* tms, svBit* tdi, svBit* trst_n) {
@@ -61,9 +154,16 @@ void pastel_jtag_tick(svBit tdo, svBit* tck, svBit* tms, svBit* tdi, svBit* trst
     int fd = accept(j.listen_fd, nullptr, nullptr);
     if (fd >= 0) {
       int one = 1;
-      setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+      setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);  // fails harmlessly on Unix
+      fcntl(fd, F_SETFD, FD_CLOEXEC);
       set_nonblock(fd);
       j.fd = fd;
+      // OpenOCD is connected and won't reconnect, so the socket's path is no
+      // longer needed. Removing it now, not at exit, means a simulator killed
+      // outright (Ctrl-C reaches it too) leaves nothing behind in /tmp.
+      cleanup();
+      j.path.clear();
+      j.dir.clear();
     }
   }
   if (j.fd >= 0 && j.pos >= j.len) {

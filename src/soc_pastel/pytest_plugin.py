@@ -15,7 +15,7 @@ A test whose requirements the harness cannot meet is skipped, not failed.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,11 @@ from .core.device import Device
 from .core.errors import ConfigurationError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
+
+try:  # pytest internals; see pytest_runtest_setup below
+    from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
+except ImportError:  # pragma: no cover - a pytest without the problem
+    _TMP_PATH_RESULTS = None
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -44,6 +49,32 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help="Dump waveforms from the start of each test, on platforms that can.",
     )
+    sim = parser.getgroup("soc-pastel simulation")
+    sim.addoption(
+        "--sim-launcher",
+        metavar="TEMPLATE",
+        help="Run the simulator through this command, e.g. 'srun -p sim' (the model's "
+        "command line is appended) or 'ssh simhost {cmd}' ({cmd} becomes a shell command).",
+    )
+    sim.addoption(
+        "--sim-launcher-class",
+        metavar="NAME",
+        help="Run the simulator with a SimLauncher plugin: a 'soc_pastel.launchers' "
+        "entry-point name or 'module:Class'.",
+    )
+    sim.addoption(
+        "--sim-host-address",
+        metavar="ADDR",
+        help="Address a remote simulator dials to reach this machine "
+        "(default: this machine's fully qualified host name).",
+    )
+    sim.addoption(
+        "--sim-connect-timeout",
+        type=float,
+        metavar="SECONDS",
+        help="How long to wait for the simulator to connect "
+        "(default 120, or 3600 with a launcher, to allow for queueing).",
+    )
     for name in registry.platform_names():
         try:
             registry.platform(name).add_options(parser)
@@ -51,8 +82,23 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             pass  # reported properly when the platform is selected
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Let Ctrl-C during fixture set-up end the run quietly.
+
+    pytest's ``tmp_path`` teardown reads per-phase results that pytest only
+    records once a phase has finished. Interrupted mid-set-up (building a
+    model, waiting for the simulator), the record is missing and pytest
+    prints a long internal ``KeyError`` traceback after its own short
+    ``KeyboardInterrupt`` notice. An empty record avoids that.
+    """
+    if _TMP_PATH_RESULTS is not None:
+        item.stash.setdefault(_TMP_PATH_RESULTS, {})
+
+
 def pytest_configure(config: pytest.Config) -> None:
-    """Register PASTEL's markers."""
+    """Register PASTEL's markers and the waveform summary."""
+    config.pluginmanager.register(_Waveforms(), "soc-pastel-waveforms")
     config.addinivalue_line(
         "markers",
         "requires(*capabilities): skip unless the harness offers every capability "
@@ -110,17 +156,50 @@ def build_harness(config: pytest.Config, device: Device, run_dir: Path) -> Platf
 def harness(
     request: pytest.FixtureRequest, pastel_device: Device, tmp_path: Path
 ) -> Iterator[PlatformHarness]:
-    """An open harness for one test; skips the test if its requirements are unmet.
+    """The harness for one test; skips the test if its requirements are unmet.
 
-    Simulator and debugger logs are written to the test's ``tmp_path``.
+    The platform starts when the test first uses the target (see
+    :class:`~soc_pastel.core.harness.PlatformHarness`), and stops after the
+    test. Simulator and debugger logs are written to the test's ``tmp_path``.
     """
     h = build_harness(request.config, pastel_device, tmp_path)
     for marker in request.node.iter_markers("requires"):
         missing = sorted(set(marker.args) - h.capabilities)
         if missing:
             pytest.skip(f"requires {', '.join(missing)}")
-    with h:
+    try:
         yield h
+    finally:
+        h.close()
+        waves = h.platform.waves_path  # closed: never starts the platform
+        if waves is not None and waves.exists():
+            request.node.user_properties.append((_WAVES_PROPERTY, str(waves)))
+
+
+_WAVES_PROPERTY = "pastel_waves"
+
+
+class _Waveforms:
+    """Lists where each test's waveform went, at the end of the run.
+
+    Paths travel in the teardown report's ``user_properties``, so this works
+    under pytest-xdist too.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str]] = []
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.when == "teardown":
+            self.seen += [
+                (report.nodeid, v) for k, v in report.user_properties if k == _WAVES_PROPERTY
+            ]
+
+    def pytest_terminal_summary(self, terminalreporter: Any) -> None:
+        if self.seen:
+            terminalreporter.write_sep("-", "waveforms")
+            for nodeid, path in self.seen:
+                terminalreporter.write_line(f"{nodeid}: {path}")
 
 
 class Firmware:
@@ -135,19 +214,54 @@ class Firmware:
         self.build_dir = build_dir
         self.location = harness.variant.code_location(location)
 
-    def build(self, *sources: str | Path, **kwargs: Any) -> Path:
-        """Compile sources with the PASTEL runtime; return the ELF path."""
+    def build(
+        self,
+        *sources: str | Path,
+        include_dirs: Iterable[str | Path] = (),
+        defines: Iterable[str] = (),
+        **kwargs: Any,
+    ) -> Path:
+        """Compile sources with the PASTEL runtime; return the ELF path.
+
+        ``include_dirs`` are relative to the test file, like the sources, and
+        searched after the variant's own (see its ``fw_build`` hook).
+        """
         from .fw.build import build_firmware
 
         h = self.harness
         paths = [self.test_dir / s for s in sources]
-        return build_firmware(h.device, h.variant, self.location, paths, self.build_dir, **kwargs)
+        dirs = [self.test_dir / d for d in include_dirs]
+        return build_firmware(
+            h.device,
+            h.variant,
+            self.location,
+            paths,
+            self.build_dir,
+            include_dirs=dirs,
+            defines=defines,
+            **kwargs,
+        )
 
-    def run(self, *sources: str | Path, timeout_s: float = 300.0, **kwargs: Any):
-        """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`."""
+    def run(
+        self,
+        *sources: str | Path,
+        include_dirs: Iterable[str | Path] = (),
+        defines: Iterable[str] = (),
+        stack_size: int | None = None,
+        timeout_s: float = 300.0,
+        **kwargs: Any,
+    ):
+        """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
+
+        ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; ``timeout_s``
+        and the rest (``on_checkpoint``, ...) to
+        :func:`~soc_pastel.fw.runner.run_firmware`.
+        """
         from .fw.runner import run_firmware
 
-        return run_firmware(self.harness, self.build(*sources), timeout_s=timeout_s, **kwargs)
+        build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
+        elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
+        return run_firmware(self.harness, elf, timeout_s=timeout_s, **kwargs)
 
 
 @pytest.fixture

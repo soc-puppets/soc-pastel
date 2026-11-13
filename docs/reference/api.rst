@@ -70,6 +70,10 @@ Simulation
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.sim.launch
+   :members:
+   :show-inheritance:
+
 .. automodule:: soc_pastel.sim.verilator
    :members:
    :show-inheritance:
@@ -90,6 +94,10 @@ Interfaces
    :show-inheritance:
 
 .. automodule:: soc_pastel.interfaces.gpio
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.interfaces.gpio.sim
    :members:
    :show-inheritance:
 

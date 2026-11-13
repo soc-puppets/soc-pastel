@@ -122,8 +122,14 @@ Build options
 ~~~~~~~~~~~~~
 
 ``firmware.build()`` and ``firmware.run()`` accept several sources, plus
-``include_dirs``, ``defines`` (strings such as ``"N_SAMPLES=16"``) and
-``stack_size``. Builds are cached by content under ``.pastel/firmware/``.
+``include_dirs`` (relative to the test file, like the sources), ``defines``
+(strings such as ``"N_SAMPLES=16"``) and ``stack_size``. Headers the device
+pack provides for every test, such as the chip's register map, come from the
+variant's ``fw_build`` hook (see :doc:`firmware`), so tests don't name them.
+
+Builds are cached under ``.pastel/firmware/`` by everything that goes into
+them: the sources, the headers in every include directory, the defines and
+the generated memory map. Regenerating a header rebuilds the firmware.
 
 Code locations
 ~~~~~~~~~~~~~~
@@ -157,6 +163,34 @@ Capabilities are interface instance names from the device descriptor
 
 .. _waves:
 
+Driving the chip's pins
+-----------------------
+
+Interfaces are reached by their instance name in the descriptor. GPIO
+samples, drives and releases pins, with bit ``n`` for pin ``n``:
+
+.. code-block:: python
+
+   from soc_pastel.interfaces.gpio import Gpio
+
+   @pytest.mark.requires("gpio")
+   def test_button_wakes_the_chip(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+
+       def on_checkpoint(cp):
+           if cp == 1:                      # firmware is waiting for the button
+               gpio.drive(1 << 4, 1 << 4)   # press it: pin 4 high
+           elif cp == 2:
+               gpio.release(1 << 4)
+
+       assert firmware.run("fw/wakeup.c", on_checkpoint=on_checkpoint).passed
+
+``drive`` and ``release`` return once the chip can see the change, so firmware
+released from a checkpoint, or a register read over debug, sees the new
+level. In simulation an X or Z pin samples as 0, and the simulation
+implementation's ``sample_unknown()`` says which pins those are. A 2-state
+simulator such as Verilator has no X or Z, so an undriven pin is just 0 there.
+
 Waveforms
 ---------
 
@@ -164,11 +198,13 @@ Run with ``--waves`` to dump waveforms on platforms that can:
 
 .. code-block:: shell
 
-   pytest tests/ --device=<device> --platform=verilator --waves
+   pytest tests/ --device=<device> --platform=<platform> --waves
 
-Verilator writes ``sim.fst``, covering the whole testbench, next to
-``sim.log`` in each test's temporary directory. The first run with ``--waves``
-builds a second, slower model; runs without it keep using the fast one.
+The simulator writes a waveform covering the whole testbench, in its own
+format, next to ``sim.log`` in each test's temporary directory (``sim.fst``
+with Verilator). Where tracing has to be compiled in, as with Verilator, the
+first run with ``--waves`` builds a second, slower model; runs without it keep
+using the fast one. The end of the run lists each test's waveform.
 
 Dumping starts at time 0. To keep a waveform small, turn dumping off and on
 around the part you care about, from the test or from firmware:
@@ -194,9 +230,9 @@ without a waveform.
 
 .. note::
 
-   Verilator cannot pause a waveform: it ignores ``$dumpoff`` and ``$dumpon``.
-   On Verilator the calls above are accepted, return true, and ``sim.fst``
-   covers the whole run.
+   Not every simulator can pause a waveform. Verilator ignores ``$dumpoff``
+   and ``$dumpon``, so on Verilator the calls above are accepted and return
+   true, and the waveform covers the whole run.
 
 Running tests
 -------------

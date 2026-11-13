@@ -6,16 +6,25 @@
 // Plusargs:
 //   +pastel_host=<ip>:<port>:<token>  set by the PASTEL platform; without it
 //                                     the simulation runs standalone.
+//   +pastel_sidecars=<file>           helper processes to run beside the
+//                                     simulator (see pastel_ep.cpp); set by
+//                                     the PASTEL platform.
 //   +pastel_waves=<file>              dump a waveform of the whole testbench
 //                                     to <file> from time 0. Needs a model
 //                                     compiled with +define+PASTEL_WAVES and
 //                                     the simulator's own tracing option.
+//                                     Xcelium records a SimVision database
+//                                     ($recordfile: SST2, <base>.trn and
+//                                     <base>.dsn, choosing the suffixes
+//                                     itself, so name the .trn file); other
+//                                     simulators use $dumpfile (VCD, or FST
+//                                     with Verilator).
 //
 // It connects on the first clock edge, after every VIP has opened its
 // endpoint at time 0, so HELLO lists them all. It then polls every
 // POLL_CYCLES clocks and ends the simulation when the host asks. The host can
 // also pause and resume waveform dumping, on simulators that honour $dumpoff
-// and $dumpon; that takes effect at a poll. Verilator ignores both, so there
+// and $dumpon (or $recordoff and $recordon); that takes effect at a poll. Verilator ignores both, so there
 // a waveform always covers the whole run and the host is told so.
 
 module pastel_server #(
@@ -26,18 +35,22 @@ module pastel_server #(
   timeunit 1ns;
   timeprecision 1ps;  // $time below is therefore in ns, whatever the design uses
 
-  import "DPI-C" function int  pastel_server_connect(input string spec);
+  import "DPI-C" function int  pastel_server_connect(input string spec, input string sidecars);
   import "DPI-C" function int  pastel_server_poll(input longint time_ns);
   import "DPI-C" function void pastel_server_close();
   import "DPI-C" function void pastel_server_waves_init(input int can_pause);
   import "DPI-C" function int  pastel_server_waves_on();
 
   string spec = "";
+  string sidecars = "";
   bit connected = 1'b0;
   int count = 0;
   int r;
 
-  initial void'($value$plusargs("pastel_host=%s", spec));
+  initial begin
+    void'($value$plusargs("pastel_host=%s", spec));
+    void'($value$plusargs("pastel_sidecars=%s", sidecars));
+  end
 
   // --- Waves ---------------------------------------------------------------
   string waves_file = "";
@@ -52,8 +65,16 @@ module pastel_server #(
 
   initial begin
     if ($value$plusargs("pastel_waves=%s", waves_file)) begin
+`ifdef XCELIUM
+      // A SimVision database (SST2: .trn and .dsn) rather than VCD: far smaller
+      // and faster for a whole SoC. Open it with `simvision <base>.trn`.
+      // No arguments: the whole design, as with $dumpvars.
+      $recordfile(waves_file);
+      $recordvars;
+`else
       $dumpfile(waves_file);
       $dumpvars;
+`endif
       waves = 1'b1;
       dumping = 1'b1;
       pastel_server_waves_init(CAN_PAUSE);  // tell the host waves exist, and are on
@@ -63,8 +84,13 @@ module pastel_server #(
   function automatic void update_waves();
     if (waves && (pastel_server_waves_on() != 0) != dumping) begin
       dumping = !dumping;
+`ifdef XCELIUM
+      if (dumping) $recordon;
+      else $recordoff;
+`else
       if (dumping) $dumpon;
       else $dumpoff;
+`endif
     end
   endfunction
 `else
@@ -77,7 +103,7 @@ module pastel_server #(
   always @(posedge clk) begin
     if (!connected) begin
       connected = 1'b1;
-      if (pastel_server_connect(spec) != 0) $fatal(1, "pastel_server: cannot connect to host");
+      if (pastel_server_connect(spec, sidecars) != 0) $fatal(1, "pastel_server: cannot connect to host");
     end
     if (++count >= POLL_CYCLES) begin
       count = 0;

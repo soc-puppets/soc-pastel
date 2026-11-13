@@ -14,7 +14,8 @@ PASTEL itself is pure Python. Running tests in simulation needs:
    * - Python 3.10+
      - 
    * - Verilator 5
-     - Tested with 5.020 (Ubuntu 24.04 package)
+     - The simulator PASTEL supports so far. Tested with 5.020 (Ubuntu 24.04
+       package)
    * - RISC-V GCC
      - ``riscv64-unknown-elf-`` prefix by default; set ``PASTEL_RISCV_PREFIX`` otherwise
    * - OpenOCD 0.12+
@@ -44,7 +45,7 @@ Until the first release on PyPI, install from the repository:
    pytest --pyargs soc_pastel.conformance --device=veerwolf --platform=verilator
 
 The first run fetches VeeRwolf (pinned to a tested commit) and its
-dependencies, and builds the Verilator model: allow a few minutes. Later runs
+dependencies, and builds the simulation model: allow a few minutes. Later runs
 reuse both. Everything is cached under ``.pastel/`` in the current directory;
 add it to ``.gitignore``.
 
@@ -58,7 +59,7 @@ Useful options:
    * - ``--device``
      - Device pack to use (``pastel list`` shows installed ones)
    * - ``--platform``
-     - Platform to run on (``verilator``)
+     - Platform to run on (``pastel list`` shows installed ones)
    * - ``--variant``
      - Device build; normally chosen from the platform
    * - ``--code-location``

@@ -35,6 +35,7 @@ from .platform import (
     Platform,
     PlatformImage,
     PlatformKind,
+    Sidecar,
     SimulationPlatform,
 )
 
@@ -65,6 +66,7 @@ __all__ = [
     "PlatformKind",
     "ProtocolError",
     "RegionKind",
+    "Sidecar",
     "SimulationPlatform",
     "TargetError",
     "TargetState",

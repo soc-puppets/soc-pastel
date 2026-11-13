@@ -167,6 +167,58 @@ def test_lifecycle_order():
     assert EVENTS == ["start", "open ocd", "open spi0", "close spi0", "close ocd", "stop"]
 
 
+def test_platform_starts_on_first_use_not_before():
+    EVENTS.clear()
+    h = make(spi0=(FakeSpi, {"impl": "fake"}))
+    assert h.has("spi0", "backdoor") and h.device is DEVICE and h.variant.name == "v"
+    h.require("on_chip_debug")
+    assert EVENTS == []  # capabilities, device and variant don't need the target
+    h.ocd.halt()
+    assert EVENTS == ["start", "open ocd", "open spi0"]
+    _ = h.platform, h.memory()
+    assert EVENTS == ["start", "open ocd", "open spi0"]  # once only
+    h.close()
+    assert EVENTS[-2:] == ["close ocd", "stop"]
+
+
+@pytest.mark.parametrize("first_use", ["platform", "iface", "memory"])
+def test_each_entry_point_opens(first_use):
+    EVENTS.clear()
+    h = make()
+    {"platform": lambda: h.platform, "iface": lambda: h.iface("on_chip_debug"), "memory": h.memory}[
+        first_use
+    ]()
+    assert EVENTS == ["start", "open ocd"]
+    h.close()
+
+
+def test_never_used_harness_never_starts_or_stops():
+    EVENTS.clear()
+    h = make()
+    h.close()
+    h.close()
+    assert EVENTS == []
+    _ = h.platform  # a closed harness doesn't come back to life
+    assert EVENTS == []
+
+
+def test_failed_open_is_not_retried():
+    class Boom(FakePlatform):
+        def start(self):
+            EVENTS.append("start")
+            raise RuntimeError("no licence")
+
+    EVENTS.clear()
+    v = DEVICE.variant()
+    h = PlatformHarness(
+        DEVICE, v, Boom(DEVICE, v, {}), {"on_chip_debug": (FakeOcd, {"impl": "fake"})}
+    )
+    with pytest.raises(RuntimeError, match="licence"):
+        _ = h.ocd
+    _ = h.ocd  # the test goes on to fail on its own terms, without a second start
+    assert EVENTS == ["start", "stop"]
+
+
 def test_memory_prefers_backdoor():
     h = make()
     assert h.memory() is FakePlatform.backdoor_mem
@@ -210,6 +262,7 @@ class FakeSim(SimulationPlatform):
 
     def start(self):
         FakeSim.seen = dict(self.expected_endpoints)
+        FakeSim.sidecars_seen = list(self.sidecars)
 
     def stop(self):
         pass
@@ -231,3 +284,30 @@ def test_sim_platform_told_which_endpoints_to_expect():
     assert set(FakeSim.seen) == {"spi0"}
     assert FakeSim.seen["spi0"].type == "spi"
     assert FakeSim.seen["spi0"].handler_class is SpiVipHandler
+
+
+def test_sim_platform_given_interface_sidecars_before_start(tmp_path):
+    from soc_pastel.core import Sidecar
+    from soc_pastel.interfaces.on_chip_debug.openocd import OpenOcd
+
+    class SidecarSpi(FakeSpi):
+        impl_name: ClassVar[str] = "sidecar"
+
+        def sim_sidecars(self):
+            return [Sidecar("helper", ("helper", "--serve"), "helper.log")]
+
+    v = DEVICE.variant()
+    ocd_cfg = {"impl": "openocd", "transport": "remote_bitbang", "cpu": "veer", "chain": "x"}
+    ifaces = {"on_chip_debug": (OpenOcd, ocd_cfg), "spi0": (SidecarSpi, {"impl": "sidecar"})}
+    platform = FakeSim(DEVICE, v, {"run_dir": tmp_path})
+    harness = PlatformHarness(DEVICE, v, platform, ifaces)
+    with pytest.raises(NotImplementedError):  # OpenOCD reaches for the endpoints on open
+        harness.open()
+    names = [sc.name for sc in FakeSim.sidecars_seen]
+    assert names == ["on_chip_debug.openocd", "helper"]
+    ocd = FakeSim.sidecars_seen[0]
+    assert ocd.argv[1:] == ("-f", "openocd.cfg") and ocd.log == "openocd.log"
+    cfg = (tmp_path / "openocd.cfg").read_text()
+    assert "tcl_port pipe" in cfg
+    assert "gdb_port disabled" in cfg and "telnet_port disabled" in cfg
+    assert "remote_bitbang host $::env(PASTEL_JTAG_SOCKET)" in cfg

@@ -147,3 +147,92 @@ class BackdoorMemory(MemoryInterface):
         for start in range(0, len(data), self.CHUNK):
             chunk = data[start : start + self.CHUNK]
             ep.access(Backdoor.WRITE, off + start, len(chunk), chunk)
+
+
+class PipeClosed(ProtocolError):
+    """A sidecar's output ended: it exited, or the simulation did.
+
+    Attributes:
+        exit_status: The sidecar's exit code, minus the signal number if a
+            signal killed it, or None if the simulation ended first.
+    """
+
+    def __init__(self, message: str, exit_status: int | None) -> None:
+        super().__init__(message)
+        self.exit_status = exit_status
+
+
+class Pipe(EndpointHandler):
+    """One ``pastel.pipe`` endpoint: the stdin and stdout of a sidecar process.
+
+    See :class:`~soc_pastel.core.platform.Sidecar`. Writes go to the
+    sidecar's stdin; what it prints is buffered until read.
+    """
+
+    type_name = "pastel.pipe"
+    _DATA, _CLOSE = 0, 1
+    #: Largest stdin chunk per message.
+    CHUNK = 256 * 1024
+
+    def __init__(self, info: EndpointInfo, send) -> None:
+        super().__init__(info, send)
+        self._cv = threading.Condition()
+        self._buf = bytearray()
+        self._dead = False
+        #: Exit status once the sidecar has exited (see :class:`PipeClosed`).
+        self.exit_status: int | None = None
+
+    def on_message(self, payload: bytes) -> None:  # noqa: D102
+        if not payload:
+            return
+        with self._cv:
+            if payload[0] == self._DATA:
+                self._buf += payload[1:]
+            elif payload[0] == self._CLOSE and len(payload) >= 5:
+                self.exit_status = int.from_bytes(payload[1:5], "little", signed=True)
+            self._cv.notify_all()
+
+    def on_close(self) -> None:  # noqa: D102
+        with self._cv:
+            self._dead = True
+            self._cv.notify_all()
+
+    def write(self, data: bytes) -> None:
+        """Write to the sidecar's stdin."""
+        for start in range(0, len(data), self.CHUNK):
+            self.send(bytes([self._DATA]) + data[start : start + self.CHUNK])
+
+    def close_input(self) -> None:
+        """Close the sidecar's stdin."""
+        self.send(bytes([self._CLOSE]))
+
+    @property
+    def closed(self) -> bool:
+        """True once the sidecar has exited or the simulation has ended."""
+        return self.exit_status is not None or self._dead
+
+    def read_until(self, terminator: bytes, timeout_s: float | None) -> bytes:
+        """Return output up to and including ``terminator``.
+
+        Raises:
+            PipeClosed: The sidecar exited, or the simulation ended, first.
+            PastelTimeout: Nothing arrived within ``timeout_s``.
+        """
+        with self._cv:
+            ok = self._cv.wait_for(lambda: terminator in self._buf or self.closed, timeout_s)
+            end = self._buf.find(terminator)
+            if end >= 0:
+                end += len(terminator)
+                out = bytes(self._buf[:end])
+                del self._buf[:end]
+                return out
+        if not ok:
+            raise PastelTimeout(f"no reply from sidecar {self.info.name!r} within {timeout_s} s")
+        if self.exit_status is not None:
+            how = (
+                f"was killed by signal {-self.exit_status}"
+                if self.exit_status < 0
+                else f"exited with status {self.exit_status}"
+            )
+            raise PipeClosed(f"sidecar {self.info.name!r} {how}", self.exit_status)
+        raise PipeClosed(f"simulation ended while waiting for {self.info.name!r}", None)

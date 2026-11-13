@@ -7,7 +7,10 @@ Endpoint protocol (host and simulator)
 --------------------------------------
 
 The test process listens; the simulator connects to the address in its
-``+pastel_host`` plusarg. Each frame is:
+``+pastel_host`` plusarg (``<host>:<port>:<token>``), trying every address the
+host resolves to. The test process drops any connection whose first frame is
+not a HELLO with the right token, and keeps listening for the simulator. Each
+frame is:
 
 .. list-table::
    :header-rows: 1
@@ -64,9 +67,9 @@ The simulator's first frame is HELLO:
 
 .. code-block:: json
 
-   {"version": 1, "token": "...",
+   {"version": 2, "token": "...",
     "endpoints": [{"id": 0, "name": "ram", "type": "pastel.backdoor", "path": "tb.u_backdoor"}],
-    "info": {"jtag_port": 41234}}
+    "info": {"jtag_socket": "/tmp/pastel-jtag-Ab12Cd/jtag.sock"}}
 
 The host checks the version and token, and checks the endpoints against the
 device descriptor.
@@ -118,6 +121,67 @@ device descriptor.
      - op \| ``80``, u32 seq, u8 status (0 ok, 1 out of range), data for READ
 
 Offsets are bytes from the region base.
+
+``gpio``
+~~~~~~~~
+
+One ``pastel_gpio`` agent (``soc_pastel/interfaces/gpio/hw/pastel_gpio.sv``),
+named after the interface's instance. A request is applied at a rising clock
+edge and answered at the next falling edge, with the pins as they then are.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Message
+     - Direction
+     - Bytes
+   * - SAMPLE
+     - host → sim
+     - ``01``, u32 seq
+   * - DRIVE
+     - host → sim
+     - ``02``, u32 seq, u64 value, u64 mask
+   * - RELEASE
+     - host → sim
+     - ``03``, u32 seq, u64 mask
+   * - REPLY
+     - sim → host
+     - op \| ``80``, u32 seq, u8 width, u64 value, u64 unknown. ``value`` reads
+       X and Z pins as 0, and ``unknown`` marks them.
+
+.. _pastel-pipe:
+
+``pastel.pipe``
+~~~~~~~~~~~~~~~
+
+The stdin and stdout of a *sidecar*, a helper process the simulator starts
+beside itself (see :class:`~soc_pastel.core.platform.Sidecar`). The host lists
+sidecars in a file named by ``+pastel_sidecars``, one per line, with
+tab-separated fields: the endpoint name, the file for the process's stderr,
+then its command line. The simulator announces one ``pastel.pipe`` endpoint
+per sidecar, and starts each one after HELLO in its working directory. Once
+asked to finish, it keeps running until every sidecar has exited, for at
+most 5 seconds, and kills any that are left.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Message
+     - Direction
+     - Bytes
+   * - DATA
+     - host → sim
+     - ``00``, bytes for the sidecar's stdin
+   * - CLOSE
+     - host → sim
+     - ``01``; closes the sidecar's stdin
+   * - DATA
+     - sim → host
+     - ``00``, bytes from the sidecar's stdout
+   * - EXITED
+     - sim → host
+     - ``01``, i32 exit code, or minus the signal number; sent after all of
+       its output
 
 VIP DPI functions
 -----------------

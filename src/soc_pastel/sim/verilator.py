@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
@@ -16,18 +19,22 @@ from soc_pastel import HDL_ROOT
 from soc_pastel.core.capabilities import WAVES
 from soc_pastel.core.device import Device, Variant
 from soc_pastel.core.endpoints import EndpointHandler
-from soc_pastel.core.errors import ConfigurationError, TargetError
+from soc_pastel.core.errors import ConfigurationError, PastelTimeout, ProtocolError, TargetError
 from soc_pastel.core.memory import MemoryInterface
 from soc_pastel.core.platform import PlatformImage, SimulationPlatform
 from soc_pastel.core.util import file_lock
 
-from .handlers import Backdoor, BackdoorMemory, PlatformControl
-from .session import Listener, SocketEndpointSession
+from .handlers import Backdoor, BackdoorMemory, Pipe, PlatformControl
+from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
+from .session import Listener, SocketEndpointSession, accept_session
 from .sources import SimSources, load_sim_sources
+
+log = logging.getLogger(__name__)
 
 SIM_HW = HDL_ROOT / "sim" / "hw"
 SIM_CSRC = HDL_ROOT / "sim" / "csrc"
 OCD_HW = HDL_ROOT / "interfaces" / "on_chip_debug" / "hw"
+GPIO_HW = HDL_ROOT / "interfaces" / "gpio" / "hw"
 
 #: PASTEL's own HDL and DPI C++, compiled into every Verilator model.
 PASTEL_HDL = [
@@ -35,6 +42,7 @@ PASTEL_HDL = [
     SIM_HW / "pastel_clock.sv",
     SIM_HW / "pastel_server.sv",
     OCD_HW / "pastel_jtag.sv",
+    GPIO_HW / "pastel_gpio.sv",
 ]
 PASTEL_CPP = [SIM_CSRC / "pastel_ep.cpp", OCD_HW / "pastel_jtag.cpp"]
 
@@ -49,6 +57,19 @@ def _content_key(path: Path) -> bytes:
     return b"\n".join(ln for ln in lines if not ln.lstrip().startswith((b"//", b"#")))
 
 
+#: Files in include directories that can change a model without being listed.
+HEADER_SUFFIXES = frozenset({".svh", ".vh", ".h", ".hpp", ".hh", ".inc"})
+
+
+def _headers(dirs: list[Path]) -> list[Path]:
+    """Header files directly inside each include directory, in a stable order."""
+    found: list[Path] = []
+    for d in dict.fromkeys(dirs):  # unique, in order
+        if d.is_dir():
+            found += sorted(f for f in d.iterdir() if f.suffix in HEADER_SUFFIXES and f.is_file())
+    return found
+
+
 class VerilatorImage(PlatformImage):
     """A Verilator model of a device variant's testbench.
 
@@ -57,21 +78,54 @@ class VerilatorImage(PlatformImage):
 
     A model that can dump waveforms is slower, so it is a separate image
     (its key ends in ``-waves``) built only when waves are asked for.
+
+    The key covers the sources (by content), PASTEL's own HDL and C++, the
+    headers in every include directory (``+incdir+``, by content), the
+    extra Verilator arguments, which ``verilator`` runs (by resolved path)
+    and the compiler environment (:data:`TOOL_ENV`). It can't see a
+    different Verilator installed at the same path; use another
+    ``--verilator-workdir`` after an in-place upgrade.
     """
 
+    #: Environment variables that change how the model is compiled.
+    TOOL_ENV = ("CXX", "CC", "CXXFLAGS", "CFLAGS", "CPPFLAGS", "LDFLAGS", "VERILATOR_ROOT")
+    #: How long to wait for the model to appear after a successful build, for
+    #: builds run on another machine whose output reaches us over NFS.
+    APPEAR_TIMEOUT_S = 30.0
+
     def __init__(
-        self, sources: SimSources, workdir: Path, verilator: str, jobs: int, waves: bool = False
+        self,
+        sources: SimSources,
+        workdir: Path,
+        verilator: str,
+        jobs: int,
+        waves: bool = False,
+        extra_args: tuple[str, ...] = (),
     ) -> None:
         self.sources = sources
         self.verilator = verilator
         self.jobs = jobs
         self.waves = waves
+        self.extra_args = (*sources.tool_args.get("verilator", ()), *extra_args)
         h = hashlib.sha256(sources.key.encode() + sources.top.encode())
         for arg in [*map(str, PASTEL_HDL + PASTEL_CPP), *sources.args]:
             h.update(arg.encode())
             p = Path(arg)
             if not arg.startswith(("+", "-")) and p.is_file():
                 h.update(_content_key(p))
+        incdirs = [SIM_HW, SIM_CSRC, OCD_HW]
+        incdirs += [Path(a[len("+incdir+") :]) for a in sources.args if a.startswith("+incdir+")]
+        for header in _headers(incdirs):
+            h.update(str(header).encode())
+            h.update(_content_key(header))
+        tool = [
+            "args",
+            *self.extra_args,
+            "verilator",
+            shutil.which(verilator) or verilator,
+            *(f"{v}={os.environ.get(v, '')}" for v in self.TOOL_ENV),
+        ]
+        h.update("\0".join(tool).encode())
         self._key = f"{sources.top}-{h.hexdigest()[:12]}" + ("-waves" if waves else "")
         self.dir = workdir / "images" / self._key
         self.exe = self.dir / "Vsim"
@@ -83,6 +137,33 @@ class VerilatorImage(PlatformImage):
     def is_built(self) -> bool:  # noqa: D102
         return self.exe.is_file()
 
+    def command(self) -> list[str]:
+        """The Verilator command line that builds the model."""
+        return [
+            self.verilator,
+            "--binary",
+            "-j",
+            str(self.jobs),
+            "--top-module",
+            self.sources.top,
+            "--Mdir",
+            str(self.dir / "obj"),
+            "-o",
+            str(self.exe),
+            "-Wno-fatal",
+            "-Wno-lint",
+            "-Wno-style",
+            "-Wno-TIMESCALEMOD",
+            *(["--trace-fst", "+define+PASTEL_WAVES"] if self.waves else []),
+            *self.extra_args,
+            "-CFLAGS",
+            f"-I{SIM_CSRC}",
+            f"+incdir+{SIM_HW}",
+            *map(str, PASTEL_HDL),
+            *self.sources.args,
+            *map(str, PASTEL_CPP),
+        ]
+
     def build(self) -> None:  # noqa: D102
         with file_lock(self.dir.with_suffix(".lock")):
             if self.is_built():
@@ -90,37 +171,36 @@ class VerilatorImage(PlatformImage):
             if shutil.which(self.verilator) is None:
                 raise ConfigurationError(f"{self.verilator} not found")
             self.dir.mkdir(parents=True, exist_ok=True)
-            cmd = [
-                self.verilator,
-                "--binary",
-                "-j",
-                str(self.jobs),
-                "--top-module",
-                self.sources.top,
-                "--Mdir",
-                str(self.dir / "obj"),
-                "-o",
-                str(self.exe),
-                "-Wno-fatal",
-                "-Wno-lint",
-                "-Wno-style",
-                "-Wno-TIMESCALEMOD",
-                *(["--trace-fst", "+define+PASTEL_WAVES"] if self.waves else []),
-                "-CFLAGS",
-                f"-I{SIM_CSRC}",
-                f"+incdir+{SIM_HW}",
-                *map(str, PASTEL_HDL),
-                *self.sources.args,
-                *map(str, PASTEL_CPP),
-            ]
-            log = self.dir / "build.log"
-            with open(log, "w") as f:
-                f.write(" ".join(cmd) + "\n\n")
+            cmd = self.command()
+            build_log = self.dir / "build.log"
+            with open(build_log, "w") as f:
+                f.write(shlex.join(cmd) + "\n\n")
                 f.flush()
                 result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
-            if result.returncode != 0 or not self.is_built():
-                tail = log.read_text()[-3000:]
-                raise ConfigurationError(f"Verilator build failed (see {log}):\n{tail}")
+            tail = build_log.read_text(errors="replace")[-3000:]
+            if result.returncode != 0:
+                raise ConfigurationError(f"Verilator build failed (see {build_log}):\n{tail}")
+            if not self._appeared():
+                raise ConfigurationError(
+                    f"Verilator exited successfully but {self.exe} does not exist "
+                    f"after {self.APPEAR_TIMEOUT_S:.0f} s. If it was built on another "
+                    f"machine, this one's file system hasn't seen it yet (see {build_log}):"
+                    f"\n{tail}"
+                )
+
+    def _appeared(self) -> bool:
+        """Wait for the model, re-listing its directory so NFS revalidates it."""
+        deadline = time.monotonic() + self.APPEAR_TIMEOUT_S
+        while True:
+            try:
+                os.listdir(self.dir)
+            except OSError:
+                pass
+            if self.is_built():
+                return True
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.5)
 
 
 class VerilatorPlatform(SimulationPlatform):
@@ -129,7 +209,13 @@ class VerilatorPlatform(SimulationPlatform):
     Options:
         ``--verilator-workdir``: where models are built (shared across runs).
         ``--verilator``: the verilator executable.
+        ``--verilator-args``: extra Verilator arguments (e.g. compiler flags).
         ``--waves``: dump waveforms to :data:`WAVES_FILE` in the run directory.
+
+    The model runs through the launcher chosen with ``--sim-launcher`` or
+    ``--sim-launcher-class`` (see :mod:`soc_pastel.sim.launch`), locally by
+    default. A remote launcher needs the build directory and the run
+    directory on a file system the simulation machine shares.
     """
 
     #: Waveform file written to the run directory when waves are enabled.
@@ -139,14 +225,19 @@ class VerilatorPlatform(SimulationPlatform):
     platform_handlers: ClassVar[Mapping[str, type[EndpointHandler]]] = {
         PlatformControl.type_name: PlatformControl,
         Backdoor.type_name: Backdoor,
+        Pipe.type_name: Pipe,
     }
+
+    #: Sidecar list written to the run directory for ``+pastel_sidecars``.
+    SIDECARS_FILE: ClassVar[str] = "sidecars.tsv"
 
     def __init__(self, device: Device, variant: Variant, options: Mapping[str, Any]) -> None:
         super().__init__(device, variant, options)
         self.workdir = Path(options.get("verilator_workdir") or ".pastel/verilator").resolve()
         self.waves = bool(options.get("waves"))
         self._image: VerilatorImage | None = None
-        self._proc: subprocess.Popen | None = None
+        self._launcher: SimLauncher = make_launcher(options)
+        self._proc: SimProcess | None = None
         self._session: SocketEndpointSession | None = None
         self._listener: Listener | None = None
         self._log = None
@@ -156,6 +247,17 @@ class VerilatorPlatform(SimulationPlatform):
         group = parser.getgroup("soc-pastel verilator")
         group.addoption("--verilator-workdir", help="Model build directory.")
         group.addoption("--verilator", default="verilator", help="Verilator executable.")
+        group.addoption(
+            "--verilator-args",
+            metavar="ARGS",
+            help="Extra Verilator arguments, as one shell-quoted string, e.g. "
+            '"-CFLAGS -fcoroutines -LDFLAGS -Wl,-rpath,/opt/gcc/lib64". Part of the model\'s '
+            "identity, so changing them builds a new model.",
+        )
+
+    @property
+    def waves_path(self) -> Path | None:  # noqa: D102
+        return self.run_dir / self.WAVES_FILE if self.waves else None
 
     def capabilities(self) -> frozenset[str]:
         """Backdoor and simulation time, plus waves when run with ``--waves``."""
@@ -164,13 +266,14 @@ class VerilatorPlatform(SimulationPlatform):
 
     def image(self) -> VerilatorImage:  # noqa: D102
         if self._image is None:
-            sources = load_sim_sources(self.variant, self.workdir / "sources")
+            sources = load_sim_sources(self.variant, self.workdir / "sources", self.name)
             self._image = VerilatorImage(
                 sources,
                 self.workdir,
                 self.options.get("verilator") or "verilator",
                 os.cpu_count() or 4,
                 waves=self.waves,
+                extra_args=tuple(shlex.split(self.options.get("verilator_args") or "")),
             )
         return self._image
 
@@ -183,21 +286,35 @@ class VerilatorPlatform(SimulationPlatform):
     def start(self) -> None:  # noqa: D102
         image = self.image()
         image.build()
-        self._listener = Listener()
-        self._log = open(self.run_dir / "sim.log", "w")
-        args = [str(image.exe), f"+pastel_host={self._listener.spec}"]
+        remote = self._launcher.remote
+        self._listener = Listener(
+            bind="" if remote else "127.0.0.1",
+            advertise=self.options.get("sim_host_address") if remote else None,
+        )
+        run_dir = self.run_dir.resolve()
+        log_path = run_dir / "sim.log"
+        self._log = open(log_path, "wb")
+        args = [str(image.exe.resolve()), f"+pastel_host={self._listener.spec}"]
+        if self.sidecars:
+            (run_dir / self.SIDECARS_FILE).write_text(
+                "".join("\t".join([sc.name, sc.log, *sc.argv]) + "\n" for sc in self.sidecars)
+            )
+            args.append(f"+pastel_sidecars={self.SIDECARS_FILE}")  # relative to the run dir
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
-        self._proc = subprocess.Popen(
-            args,
-            cwd=self.run_dir,
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-        )
-        conn = self._listener.accept(120.0, alive=lambda: self._proc.poll() is None)
-        self._session = SocketEndpointSession(
-            conn, self._listener.token, self.expected_endpoints, self.platform_handlers
-        )
+        self._proc = self._launcher.launch(args, run_dir, self._log)
+        try:
+            self._session = accept_session(
+                self._listener,
+                connect_timeout(self.options, self._launcher),
+                self.expected_endpoints,
+                self.platform_handlers,
+                alive=lambda: self._proc.poll() is None,
+            )
+        except (ProtocolError, PastelTimeout) as e:
+            self._log.flush()
+            tail = log_path.read_text(errors="replace")[-2000:].strip()
+            raise type(e)(f"{e}; see {log_path}" + (f":\n{tail}" if tail else "")) from None
 
     def stop(self) -> None:  # noqa: D102
         if self._session is not None:
@@ -208,10 +325,15 @@ class VerilatorPlatform(SimulationPlatform):
             self._session.close()
             self._session = None
         if self._proc is not None:
-            try:
-                self._proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+            # A remote simulator also exits by itself once its connection
+            # closes; terminating the launcher (srun, ssh) is the fallback.
+            for escalate in (self._proc.terminate, self._proc.kill):
+                try:
+                    self._proc.wait(timeout=10)
+                    break
+                except subprocess.TimeoutExpired:
+                    escalate()
+            else:
                 self._proc.wait()
             self._proc = None
         if self._listener is not None:
@@ -247,7 +369,3 @@ class VerilatorPlatform(SimulationPlatform):
             if e.type == Backdoor.type_name
         }
         return BackdoorMemory(self.variant, doors)  # type: ignore[arg-type]
-
-    def debug_connection(self) -> Mapping[str, Any]:  # noqa: D102
-        port = self.endpoints.hello.info.get("jtag_port")
-        return {"remote_bitbang": ("127.0.0.1", int(port))} if port else {}

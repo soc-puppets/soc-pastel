@@ -69,6 +69,30 @@ The linker script is generated too, from the code location:
 Firmware is loaded directly into place: ``.data`` needs no copying, and the
 start-up code clears ``.bss``.
 
+The chip's own headers
+----------------------
+
+A device pack can add include directories and defines to every firmware
+build of a variant, for example so test firmware takes register addresses
+from the header a SystemRDL flow generates rather than from hand-written
+``#define``\ s. Name a hook in the variant's params:
+
+.. code-block:: python
+
+   from soc_pastel.fw.build import FirmwareOptions
+
+   def fw_build(variant):
+       return FirmwareOptions(
+           include_dirs=(REPO / "software" / "firmware" / "my_chip",),
+           defines=("MY_CHIP_SIM=1",),
+       )
+
+   SIM = Variant(name="sim", ..., params={"fw_build": "my_pack.fw:fw_build"})
+
+Test firmware can then ``#include "my_chip_addrmap.h"``. The directories are
+searched after PASTEL's own headers, so they can't hide them, and before a
+test's ``include_dirs``. Changing any header in them rebuilds the firmware.
+
 Results and faults
 ------------------
 

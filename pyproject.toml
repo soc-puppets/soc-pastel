@@ -49,7 +49,8 @@ soc_pastel = "soc_pastel.pytest_plugin"
 "on_chip_debug/openocd" = "soc_pastel.interfaces.on_chip_debug.openocd:OpenOcd"
 "on_chip_debug/jlink" = "soc_pastel.interfaces.on_chip_debug.jlink:JLink"
 "on_chip_debug/pyocd" = "soc_pastel.interfaces.on_chip_debug.pyocd:PyOcd"
-# Simulation implementations of gpio/spi/uart are added as they are written.
+"gpio/sim" = "soc_pastel.interfaces.gpio.sim:SimGpio"
+# Simulation implementations of spi/uart are added as they are written.
 
 [project.entry-points."soc_pastel.platforms"]
 verilator = "soc_pastel.sim.verilator:VerilatorPlatform"
