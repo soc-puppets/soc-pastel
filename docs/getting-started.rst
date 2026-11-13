@@ -48,11 +48,13 @@ Until the first release on PyPI, install from the repository.
 
 .. code-block:: shell
 
-   python3 -m venv .venv
+   python3 -m venv --upgrade-deps .venv
    source .venv/bin/activate
 
 The virtual environment keeps PASTEL and its dependencies out of your system
-Python. The first command creates it once, in ``.venv``. The second selects it
+Python. The first command creates it once, in ``.venv``; ``--upgrade-deps``
+also upgrades the environment's ``pip`` to the latest release, because the one
+bundled with an older Python can be too old for step 3. The second selects it
 for the current shell, so run it again in every new terminal before using
 ``pytest`` or ``pastel``. (In csh or tcsh, source ``.venv/bin/activate.csh``
 instead.)
@@ -61,7 +63,7 @@ instead.)
 
    The environment uses whichever Python created it, and PASTEL needs 3.10 to
    3.13. If ``python3 --version`` reports anything else, name a suitable
-   interpreter explicitly, e.g. ``python3.12 -m venv .venv``. Too old a Python
+   interpreter explicitly, e.g. ``python3.12 -m venv --upgrade-deps .venv``. Too old a Python
    makes step 3 fail with a message about editable mode needing a
    setuptools-based build; Python 3.15 installs but makes step 5 fail when
    FuseSoC starts (see :doc:`guides/troubleshooting`).

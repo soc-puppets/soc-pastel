@@ -30,15 +30,16 @@ Installing
 ----------
 
 **``pip install -e`` fails with** ``editable mode currently requires a setuptools-based build``.
-``pip`` belongs to a Python older than 3.10. Create the virtual environment
-with a newer interpreter (``python3.12 -m venv .venv``), activate it and
-install again.
+``pip`` belongs to a Python older than 3.10, or is itself older than 21.3.
+Create the virtual environment with a suitable interpreter and an up-to-date
+``pip`` (``python3.12 -m venv --upgrade-deps .venv``), activate it and install
+again.
 
 **A** ``fusesoc`` **command fails with** ``ValueError: Cannot use capturing groups in re.Scanner``.
 The virtual environment was created with Python 3.15, which FuseSoC (through
 its ``simplesat`` dependency) does not run on yet. Recreate the environment
 with Python 3.10 to 3.13 and install again:
-``rm -rf .venv && python3.12 -m venv .venv``.
+``rm -rf .venv && python3.12 -m venv --upgrade-deps .venv``.
 
 **``pytest`` doesn't recognise** ``--device``, **or** ``pastel`` **is not found.**
 The virtual environment PASTEL was installed into isn't active in this shell:
