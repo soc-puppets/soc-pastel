@@ -11,8 +11,8 @@ PASTEL itself is pure Python. Running tests in simulation needs:
 
    * - Tool
      - Notes
-   * - Python 3.10+
-     - 
+   * - Python 3.10 to 3.13
+     - Python 3.15 does not work yet: FuseSoC fails to start on it
    * - Verilator 5
      - The simulator PASTEL supports so far. Tested with 5.020 (Ubuntu 24.04
        package)
@@ -59,11 +59,12 @@ instead.)
 
 .. note::
 
-   The environment uses whichever Python created it, and PASTEL needs 3.10 or
-   newer. If ``python3 --version`` reports something older, name a newer
-   interpreter explicitly, e.g. ``python3.12 -m venv .venv``. An old Python
+   The environment uses whichever Python created it, and PASTEL needs 3.10 to
+   3.13. If ``python3 --version`` reports anything else, name a suitable
+   interpreter explicitly, e.g. ``python3.12 -m venv .venv``. Too old a Python
    makes step 3 fail with a message about editable mode needing a
-   setuptools-based build.
+   setuptools-based build; Python 3.15 installs but makes step 5 fail when
+   FuseSoC starts (see :doc:`guides/troubleshooting`).
 
 **Step 3: install the PASTEL core.**
 
@@ -90,6 +91,17 @@ platforms it can run on.
 .. code-block:: shell
 
    pytest --pyargs soc_pastel.conformance --device=veerwolf --platform=verilator
+
+.. note::
+
+   pytest normally takes file or directory paths. ``--pyargs`` tells it to
+   treat the argument as the name of an installed Python package instead, and
+   to find that package's directory itself. ``soc_pastel.conformance`` is the
+   conformance suite shipped inside PASTEL: tests every device should pass on
+   every platform it supports. So this command runs PASTEL's own tests against
+   the device you name, from any directory, without you needing to know where
+   PASTEL is installed. To run your own tests, pass their path as usual:
+   ``pytest tests/ --device=... --platform=...``.
 
 The first run fetches VeeRwolf (pinned to a tested commit) and its
 dependencies, and builds the simulation model: allow a few minutes. Later runs
