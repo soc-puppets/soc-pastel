@@ -54,6 +54,7 @@ soc_pastel = "soc_pastel.pytest_plugin"
 
 [project.entry-points."soc_pastel.platforms"]
 verilator = "soc_pastel.sim.verilator:VerilatorPlatform"
+xcelium = "soc_pastel.sim.xcelium:XceliumPlatform"
 
 [project.entry-points."soc_pastel.hdl"]
 soc_pastel = "soc_pastel:HDL_ROOT"

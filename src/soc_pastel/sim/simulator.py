@@ -180,8 +180,21 @@ class SimulatorImage(PlatformImage):
     def steps(self) -> list[list[str]]:
         """The commands that build the model, run in order in :attr:`dir`."""
 
+    def check_step(self, index: int, output: str) -> None:  # noqa: B027 - optional hook
+        """Check step ``index``'s output (as written to the build log).
+
+        Raise :class:`~soc_pastel.core.errors.ConfigurationError` if it failed
+        despite exiting successfully (a batch wrapper may not pass on the
+        tool's exit status).
+        """
+
     def finish(self) -> None:  # noqa: B027 - optional hook
         """Called after every step succeeded, e.g. to write a run script."""
+
+    def check_tool(self) -> None:
+        """Fail early if the simulator isn't installed here."""
+        if shutil.which(self.executable) is None:
+            raise ConfigurationError(f"{self.executable} not found")
 
     def is_built(self) -> bool:  # noqa: D102
         return self.exe.is_file()
@@ -190,19 +203,22 @@ class SimulatorImage(PlatformImage):
         with file_lock(self.dir.with_suffix(".lock")):
             if self.is_built():
                 return
-            if shutil.which(self.executable) is None:
-                raise ConfigurationError(f"{self.executable} not found")
+            self.check_tool()
             self.dir.mkdir(parents=True, exist_ok=True)
             with open(self.build_log, "w") as f:
-                for cmd in self.steps():
+                for index, cmd in enumerate(self.steps()):
                     f.write(shlex.join(cmd) + "\n\n")
                     f.flush()
+                    start = f.tell()
                     result = subprocess.run(cmd, cwd=self.dir, stdout=f, stderr=subprocess.STDOUT)
+                    f.flush()
                     if result.returncode != 0:
-                        f.close()
                         raise ConfigurationError(
                             f"{self.tool} build failed (see {self.build_log}):\n{self._tail()}"
                         )
+                    with open(self.build_log, errors="replace") as r:
+                        r.seek(start)
+                        self.check_step(index, r.read())
                     f.write("\n")
             self.finish()
             if not self._appeared():
