@@ -243,4 +243,32 @@ Running tests
    pytest tests/ --device=<device> --platform=<platform> -n 8   # in parallel
 
 Each test's logs (``sim.log``, ``openocd.log``, ``openocd.cfg``) are in its pytest
-temporary directory; pytest prints its path when a test fails.
+temporary directory, its *run directory*.
+
+What a run shows
+~~~~~~~~~~~~~~~~
+
+Simulations are slow, so PASTEL reports as it goes, one line per step, tagged
+with the test:
+
+.. code-block:: text
+
+   pastel [test_hello] simulator started; run directory /tmp/pytest-of-me/pytest-7/test_hello0
+   pastel [test_hello] simulator connected after 0.4 s
+   pastel [test_hello] OpenOCD ready (riscv.cpu) after 1.2 s
+   pastel [test_hello] loaded hello-ram.elf (1776 bytes via backdoor) in 0.0 s
+   pastel [test_hello] running hello-ram.elf from 0x0
+   pastel [test_hello] fw: Hello from veerwolf (sim)
+   pastel [test_hello] checkpoint 1
+   pastel [test_hello] firmware finished: test_main returned 0
+
+Model builds, firmware builds, warnings and errors appear the same way. The
+moment a test fails, PASTEL prints a *failure block* while the rest of the run
+carries on. It holds the error, the test's run directory and the logs in it,
+and the model's build log. pytest repeats the error in its usual summary at the
+end, and PASTEL adds a list of the failing tests' run directories, and each
+test's waveform if ``--waves`` was given.
+
+``--pastel-quiet`` drops the progress lines and keeps failure blocks. Under
+pytest-xdist (``-n``), workers can't print progress lines, but failure blocks
+and the summary still appear.

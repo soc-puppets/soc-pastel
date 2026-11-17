@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import socket
@@ -26,6 +27,8 @@ _KEYS = {"impl", "transport", "chain", "cpu", "executable", "startup_timeout_s"}
 _EOT = b"\x1a"
 _HEX = re.compile(r"0x[0-9a-fA-F]+")
 _CFG, _LOG = "openocd.cfg", "openocd.log"
+
+log = logging.getLogger(__name__)
 
 
 def _free_port() -> int:
@@ -195,11 +198,13 @@ class OpenOcd(OnChipDebug):
 
     def open(self) -> None:  # noqa: D102
         timeout_s = float(self.config.get("startup_timeout_s", 120))
-        log = self.harness.platform.run_dir / _LOG
+        log_path = self.harness.platform.run_dir / _LOG
+        began = time.monotonic()
         if self._sidecar is not None:
-            self._open_sidecar(timeout_s, log)
+            self._open_sidecar(timeout_s, log_path)
         else:
-            self._open_local(timeout_s, log)
+            self._open_local(timeout_s, log_path)
+        log.info("OpenOCD ready (%s) after %.1f s", self._target, time.monotonic() - began)
 
     def _open_sidecar(self, timeout_s: float, log: Path) -> None:
         from soc_pastel.sim.handlers import PipeClosed

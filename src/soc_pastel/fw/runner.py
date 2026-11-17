@@ -93,6 +93,7 @@ def run_firmware(
     cb = elf_symbol(elf, "_SEGGER_RTT")
     rtt = Rtt(memory_for(harness, cb, 64), cb)
     ocd.resume(entry)
+    log.info("running %s from %#x", elf.name, entry)
 
     deadline = time.monotonic() + timeout_s
     rtt.wait_ready(timeout_s)
@@ -125,6 +126,7 @@ def run_firmware(
             elif mid == Mbox.CHECKPOINT:
                 (cp,) = struct.unpack("<I", payload)
                 result.checkpoints.append(cp)
+                log.info("checkpoint %d", cp)
                 if on_checkpoint:
                     on_checkpoint(cp)
                 send(Mbox.HOST_ACK, payload)
@@ -135,9 +137,12 @@ def run_firmware(
                 result.data.append(payload)
             elif mid == Mbox.FINISH:
                 (result.result,) = struct.unpack("<i", payload)
+                log.info("firmware finished: test_main returned %d", result.result)
                 return result
             elif mid == Mbox.FAULT:
-                raise FirmwareFault(*struct.unpack("<III", payload), result.output)
+                fault = FirmwareFault(*struct.unpack("<III", payload), result.output)
+                log.error("%s", fault)
+                raise fault
         if time.monotonic() > deadline:
             raise PastelTimeout(f"firmware did not finish within {timeout_s:.0f} s")
         if not harness.platform.running:

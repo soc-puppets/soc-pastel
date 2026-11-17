@@ -52,6 +52,13 @@ Core
    :members:
    :show-inheritance:
 
+Reporting
+---------
+
+.. automodule:: soc_pastel.reporting
+   :members:
+   :show-inheritance:
+
 Firmware
 --------
 

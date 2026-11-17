@@ -23,8 +23,9 @@ Where the logs are
    * - Firmware build
      - ``.pastel/firmware/<device>/<name>-<location>-<hash>/build.log``
 
-pytest prints the temporary directory (``/tmp/pytest-of-$USER/...``) for failing
-tests.
+When a test fails, PASTEL prints its run directory (``/tmp/pytest-of-$USER/...``)
+and the logs in it straight away, and lists the run directories of every
+failing test at the end.
 
 Installing
 ----------

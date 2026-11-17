@@ -28,6 +28,7 @@ from .core.device import Device
 from .core.errors import ConfigurationError, SimulatorError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
+from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter
 
 try:  # pytest internals; see pytest_runtest_setup below
     from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
@@ -44,6 +45,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--code-location",
         help="Where firmware is linked to run; defaults to the variant's first code location.",
+    )
+    group.addoption(
+        "--pastel-quiet",
+        action="store_true",
+        help="Don't print PASTEL's progress lines while tests run (failures are still shown).",
     )
     group.addoption(
         "--waves",
@@ -104,6 +110,9 @@ def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
             raise
         log.exception("closing the harness failed")
     platform = harness.platform  # closed: doesn't start it again
+    image = getattr(platform, "_image", None)
+    if image is not None and image.build_log.is_file():
+        item.user_properties.append((MODEL_LOG, str(image.build_log)))
     check_run = getattr(platform, "check_run", None)
     if check_run is None:
         return
@@ -149,7 +158,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register PASTEL's markers and the waveform summary."""
-    config.pluginmanager.register(_Waveforms(), "soc-pastel-waveforms")
+    config.pluginmanager.register(Reporter(config), "soc-pastel-reporter")
     config.addinivalue_line(
         "markers",
         "requires(*capabilities): skip unless the harness offers every capability "
@@ -214,6 +223,7 @@ def harness(
     test. Simulator and debugger logs are written to the test's ``tmp_path``.
     """
     h = build_harness(request.config, pastel_device, tmp_path)
+    request.node.user_properties.append((RUN_DIR, str(tmp_path)))
     for marker in request.node.iter_markers("requires"):
         missing = sorted(set(marker.args) - h.capabilities)
         if missing:
@@ -224,33 +234,7 @@ def harness(
         h.close()
         waves = h.platform.waves_path  # closed: never starts the platform
         if waves is not None and waves.exists():
-            request.node.user_properties.append((_WAVES_PROPERTY, str(waves)))
-
-
-_WAVES_PROPERTY = "pastel_waves"
-
-
-class _Waveforms:
-    """Lists where each test's waveform went, at the end of the run.
-
-    Paths travel in the teardown report's ``user_properties``, so this works
-    under pytest-xdist too.
-    """
-
-    def __init__(self) -> None:
-        self.seen: list[tuple[str, str]] = []
-
-    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if report.when == "teardown":
-            self.seen += [
-                (report.nodeid, v) for k, v in report.user_properties if k == _WAVES_PROPERTY
-            ]
-
-    def pytest_terminal_summary(self, terminalreporter: Any) -> None:
-        if self.seen:
-            terminalreporter.write_sep("-", "waveforms")
-            for nodeid, path in self.seen:
-                terminalreporter.write_line(f"{nodeid}: {path}")
+            request.node.user_properties.append((WAVES, str(waves)))
 
 
 class Firmware:

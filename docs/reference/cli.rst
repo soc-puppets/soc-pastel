@@ -20,6 +20,9 @@ pytest options
    * - ``--waves``
      - Dump waveforms from the start of each test, on platforms that can
        (see :ref:`waves`).
+   * - ``--pastel-quiet``
+     - Don't print PASTEL's progress lines while tests run. Failures are
+       still reported at once, with their run directories.
    * - ``--sim-launcher=<template>``
      - Run the simulator through a command: a prefix (``srun -p sim``) or a
        template with ``{cmd}`` (``ssh simbox {cmd}``). See
