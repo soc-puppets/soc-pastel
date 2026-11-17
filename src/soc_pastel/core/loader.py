@@ -11,7 +11,7 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 
 from .errors import ConfigurationError, TargetError
-from .memory import MemoryInterface
+from .memory import MemoryInterface, RoutedMemory
 
 if TYPE_CHECKING:
     from .harness import PlatformHarness
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def memory_for(harness: PlatformHarness, addr: int, length: int) -> MemoryInterface:
     """The fastest memory interface that reaches ``[addr, addr + length)``."""
     mem = harness.memory()
-    return mem if mem.can_access(addr, length) else harness.ocd.memory
+    return mem.route(addr, length) if isinstance(mem, RoutedMemory) else mem
 
 
 log = logging.getLogger(__name__)

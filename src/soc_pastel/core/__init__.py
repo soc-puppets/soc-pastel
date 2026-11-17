@@ -29,7 +29,7 @@ from .errors import (
 )
 from .harness import PlatformHarness
 from .interface import Interface
-from .memory import MemoryInterface
+from .memory import MemoryInterface, RoutedMemory
 from .on_chip_debug import OnChipDebug, TargetState
 from .platform import (
     HardwarePlatform,
@@ -67,6 +67,7 @@ __all__ = [
     "PlatformKind",
     "ProtocolError",
     "RegionKind",
+    "RoutedMemory",
     "Sidecar",
     "SimulationPlatform",
     "SimulatorError",

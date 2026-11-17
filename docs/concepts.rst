@@ -37,7 +37,8 @@ for that platform:
    * - ``harness.ocd``
      - The on-chip debug interface (reset, halt, registers, memory)
    * - ``harness.memory()``
-     - The fastest memory path: the backdoor in simulation, debug otherwise
+     - The fastest memory path for each address: the backdoor where one reaches,
+       debug otherwise
    * - ``harness.iface("spi0")``
      - Any other interface, by instance name
    * - ``harness.regs``

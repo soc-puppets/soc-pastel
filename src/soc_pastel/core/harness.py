@@ -24,7 +24,7 @@ from .device import ON_CHIP_DEBUG, Device, Variant
 from .endpoints import EndpointBacked, ExpectedEndpoint
 from .errors import CapabilityError
 from .interface import Interface
-from .memory import MemoryInterface
+from .memory import MemoryInterface, RoutedMemory
 from .on_chip_debug import OnChipDebug
 from .platform import Platform, SimulationPlatform
 
@@ -132,16 +132,18 @@ class PlatformHarness:
     # -- Memory and registers -------------------------------------------------
 
     def memory(self, *, prefer_backdoor: bool = True) -> MemoryInterface:
-        """Return the best memory interface.
+        """Return the fastest way to reach any address.
 
-        The backdoor when the platform has one and ``prefer_backdoor`` is set,
-        otherwise memory access through on-chip debug.
+        With a backdoor (simulation) and ``prefer_backdoor`` set, each access
+        goes through the backdoor if it reaches that address and through
+        on-chip debug otherwise. Without one, or with ``prefer_backdoor=False``,
+        everything goes through on-chip debug.
         """
         self._open_on_first_use()
         if prefer_backdoor:
             backdoor = self._platform.backdoor()
             if backdoor is not None:
-                return backdoor
+                return RoutedMemory(backdoor, self.ocd.memory)
         return self.ocd.memory
 
     @property

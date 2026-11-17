@@ -70,3 +70,31 @@ class MemoryInterface(ABC):
     def write32(self, addr: int, value: int) -> None:
         """Write one 32-bit little-endian word."""
         self.write_words(addr, [value], 4)
+
+
+class RoutedMemory(MemoryInterface):
+    """Each access through the first interface if it reaches the range, else the second.
+
+    What :meth:`PlatformHarness.memory <soc_pastel.core.harness.PlatformHarness.memory>`
+    returns on a platform with a backdoor: the backdoor where one reaches,
+    on-chip debug elsewhere (e.g. a memory with no backdoor).
+    """
+
+    name = "memory"
+
+    def __init__(self, preferred: MemoryInterface, fallback: MemoryInterface) -> None:
+        self.preferred = preferred
+        self.fallback = fallback
+
+    def route(self, addr: int, length: int = 1) -> MemoryInterface:
+        """The interface an access to ``[addr, addr + length)`` goes through."""
+        return self.preferred if self.preferred.can_access(addr, length) else self.fallback
+
+    def read(self, addr: int, length: int) -> bytes:  # noqa: D102
+        return self.route(addr, length).read(addr, length)
+
+    def write(self, addr: int, data: bytes) -> None:  # noqa: D102
+        self.route(addr, len(data)).write(addr, data)
+
+    def can_access(self, addr: int, length: int = 1) -> bool:  # noqa: D102
+        return self.route(addr, length).can_access(addr, length)

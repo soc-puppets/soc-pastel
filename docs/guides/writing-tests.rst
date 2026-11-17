@@ -24,8 +24,8 @@ interface: ``reset``, ``halt``, ``resume``, ``step``, ``state``, ``read_register
 ``write_register``, breakpoints, and ``memory`` for access through the debug port.
 
 ``harness.memory()`` returns the fastest
-:py:class:`~soc_pastel.core.memory.MemoryInterface`: the backdoor in
-simulation, on-chip debug otherwise. Addresses and lengths are always bytes;
+:py:class:`~soc_pastel.core.memory.MemoryInterface` for each address: the
+backdoor in simulation where one reaches that memory, on-chip debug otherwise. Addresses and lengths are always bytes;
 ``read32``, ``write32``, ``read_words`` and ``write_words`` are conveniences on top.
 
 Memory reachable only while halted
@@ -119,35 +119,138 @@ A test passes only if all of these hold:
   error messages (``$error``, ``$fatal``, assertion failures, ``UVM_ERROR``,
   ...) and the simulator exited successfully. See :doc:`simulators`.
 
-Doing things at a known point
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Doing things at a known point: checkpoints
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A checkpoint pauses the firmware until the host has acted:
+A *checkpoint* is the firmware telling the test "I've got this far". It
+carries a number you choose, the id. With ``wait`` set, the firmware also stops
+until the test says carry on, so the test can act at exactly that point:
+drive a pin, write a register, or look at memory, knowing the firmware isn't
+running past it.
 
 .. code-block:: c
 
-   pastel_checkpoint(1, 1);   // id 1; wait for the host
+   pastel_checkpoint(1, 1);   // id 1; wait for the test
+   pastel_checkpoint(2, 0);   // id 2; don't wait: just a marker
+
+On the test side, ``firmware.run(..., on_checkpoint=f)`` calls ``f(id)`` for
+each checkpoint, in order, and the ids end up in ``result.checkpoints``. When
+the firmware waits, ``f`` runs while it waits, and the firmware carries on
+only once ``f`` has returned:
+
+.. code-block:: text
+
+   firmware                            test (on_checkpoint)
+   --------                            --------------------
+   pastel_checkpoint(1, 1)  ───────▶   on_checkpoint(1) runs: drive pins,
+     ...waits...                       read and write memory, check things
+                            ◀───────   on_checkpoint(1) returns
+   carries on
+
+If ``f`` raises (a failed ``assert``, say), the test fails there. A checkpoint
+that doesn't wait still calls ``f``, but the firmware may be well past it by
+then.
+
+Each example below is a real test, in
+``packages/veerwolf/tests/test_checkpoints.py`` with its firmware in
+``packages/veerwolf/tests/fw/``.
+
+**1. Stimulus at a known point.** The firmware checks a "button" is up, waits
+while the test presses it, then checks it sees the press:
+
+.. code-block:: c
+
+   PASTEL_CHECK((pastel_read32(GPIO) & BUTTON) == 0, "button pressed too early");
+   pastel_checkpoint(1, 1);  // wait: the test presses the button, then lets us go
+   PASTEL_CHECK(pastel_read32(GPIO) & BUTTON, "button press not seen");
 
 .. code-block:: python
 
-   def test_interrupt(firmware):
+   def test_press_a_button_while_the_firmware_waits(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+
        def on_checkpoint(cp):
            if cp == 1:
-               firmware.harness.memory().write32(TRIGGER, 1)
+               gpio.drive(BUTTON, BUTTON)
 
-       assert firmware.run("fw/interrupt.c", on_checkpoint=on_checkpoint).passed
+       firmware.run("fw/cp_stimulus.c", on_checkpoint=on_checkpoint)
 
-To share variables between firmware and host, build first and look up the
-symbol:
+The firmware does the checking here, so the test needs no assertion:
+``firmware.run()`` fails the test if a ``PASTEL_CHECK`` fails.
+
+**2. Inspecting the chip at a known point.** The firmware computes a value,
+puts it on the output pins and waits while the test checks both the variable
+and the pins. ``firmware.symbol(name)`` gives a firmware variable's address:
+
+.. code-block:: c
+
+   volatile uint32_t total;
+
+   int test_main(void) {
+     for (uint32_t i = 1; i <= 10; i++) total += i;
+     pastel_write32(GPIO, total);
+     pastel_checkpoint(1, 1);
+     return 0;
+   }
 
 .. code-block:: python
 
-   from soc_pastel.core.loader import elf_symbol
+   def on_checkpoint(cp):
+       with harness.ocd.halted():
+           assert harness.memory().read32(firmware.symbol("total")) == 55
+       assert gpio.sample() & 0xFFFF == 55
 
-   elf = firmware.build("fw/shared.c")
-   addr = elf_symbol(elf, "shared_buffer")
+``harness.memory()`` reaches the variable wherever it lives: through the
+backdoor if there is one for that memory, otherwise through on-chip debug.
+Some memories can only be reached through debug while the CPU is halted, such
+as VeeR's DCCM at the ``ccm`` code location. ``harness.ocd.halted()`` halts the
+CPU for the block and resumes it afterwards, which is harmless while the
+firmware waits.
 
-then run it with :py:func:`~soc_pastel.fw.runner.run_firmware`.
+**3. Progress markers.** Checkpoints that don't wait record how far the
+firmware got, for checking afterwards:
+
+.. code-block:: python
+
+   result = firmware.run("fw/cp_progress.c")
+   assert result.checkpoints == [10, 20, 30]
+
+**4. A conversation.** One step per checkpoint, keyed on the id. At each step
+the test checks the firmware's answer to the last command and gives it the
+next one, through two firmware variables:
+
+.. code-block:: c
+
+   volatile uint32_t command, answer;
+
+   int test_main(void) {
+     for (uint32_t step = 1; step <= 3; step++) {
+       pastel_checkpoint(step, 1);   // wait for the test's command
+       answer = command * command;
+     }
+     pastel_checkpoint(4, 1);        // let the test check the last answer
+     return 0;
+   }
+
+.. code-block:: python
+
+   def on_checkpoint(cp):
+       with harness.ocd.halted():
+           mem = harness.memory()
+           if cp > 1:   # the firmware has answered the previous command
+               sent = cp - 1 + 10
+               assert mem.read32(firmware.symbol("answer")) == sent * sent
+           if cp <= 3:
+               mem.write32(firmware.symbol("command"), cp + 10)
+
+Things to know:
+
+- Ids are yours to choose, and may repeat. A marker and a waiting checkpoint
+  with the same id don't interfere.
+- A waiting checkpoint blocks the firmware's main code. Interrupt handlers
+  still run.
+- Firmware time keeps passing in the simulation while the test acts, except
+  inside ``harness.ocd.halted()``.
 
 Build options
 ~~~~~~~~~~~~~

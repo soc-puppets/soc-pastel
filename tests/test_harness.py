@@ -221,7 +221,7 @@ def test_failed_open_is_not_retried():
 
 def test_memory_prefers_backdoor():
     h = make()
-    assert h.memory() is FakePlatform.backdoor_mem
+    assert h.memory().route(0x10, 4) is FakePlatform.backdoor_mem
     assert h.memory(prefer_backdoor=False) is FakeOcd._mem
     h.memory().write32(0x10, 0xDEADBEEF)
     assert h.memory().read(0x10, 4) == bytes.fromhex("efbeadde")
@@ -311,3 +311,19 @@ def test_sim_platform_given_interface_sidecars_before_start(tmp_path):
     assert "tcl_port pipe" in cfg
     assert "gdb_port disabled" in cfg and "telnet_port disabled" in cfg
     assert "remote_bitbang host $::env(PASTEL_JTAG_SOCKET)" in cfg
+
+
+def test_memory_falls_back_to_debug_where_the_backdoor_does_not_reach():
+    from soc_pastel.core import RoutedMemory
+
+    class PartialBackdoor(FakeMemory):
+        def can_access(self, addr, length=1):
+            return addr + length <= 0x80
+
+    backdoor, debug = PartialBackdoor(), FakeMemory()
+    mem = RoutedMemory(backdoor, debug)
+    mem.write32(0x10, 1)
+    mem.write32(0x90, 2)
+    assert backdoor.read(0x10, 4) == (1).to_bytes(4, "little")
+    assert debug.read(0x90, 4) == (2).to_bytes(4, "little") and backdoor.read(0x90, 4) == bytes(4)
+    assert mem.route(0x7C, 8) is debug  # straddles the edge

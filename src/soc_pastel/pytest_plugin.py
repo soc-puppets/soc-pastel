@@ -248,6 +248,21 @@ class Firmware:
         self.test_dir = test_dir
         self.build_dir = build_dir
         self.location = harness.variant.code_location(location)
+        #: The ELF most recently built, by :meth:`build` or :meth:`run`.
+        self.elf: Path | None = None
+
+    def symbol(self, name: str) -> int:
+        """The address of ``name`` in the firmware most recently built.
+
+        Use it in ``on_checkpoint`` to read or write a firmware variable while
+        the firmware waits: :meth:`run` builds before it starts the target.
+        """
+        from .core.errors import ConfigurationError
+        from .core.loader import elf_symbol
+
+        if self.elf is None:
+            raise ConfigurationError("no firmware built yet: call build() or run() first")
+        return elf_symbol(self.elf, name)
 
     def build(
         self,
@@ -266,7 +281,7 @@ class Firmware:
         h = self.harness
         paths = [self.test_dir / s for s in sources]
         dirs = [self.test_dir / d for d in include_dirs]
-        return build_firmware(
+        self.elf = build_firmware(
             h.device,
             h.variant,
             self.location,
@@ -276,6 +291,7 @@ class Firmware:
             defines=defines,
             **kwargs,
         )
+        return self.elf
 
     def run(
         self,
