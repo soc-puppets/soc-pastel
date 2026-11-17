@@ -71,6 +71,21 @@ def _content_key(path: Path) -> bytes:
     return b"\n".join(ln for ln in lines if not ln.lstrip().startswith((b"//", b"#")))
 
 
+def standard_source_args(args: Sequence[str]) -> list[str]:
+    """Simulator-independent source args, for simulators other than Verilator.
+
+    ``.vlt`` files (Verilator configuration) are dropped,
+    ``-D<name>[=<value>]`` becomes ``+define+<name>[=<value>]``, and files and
+    ``+incdir+`` pass through.
+    """
+    out = []
+    for arg in args:
+        if arg.endswith(".vlt"):
+            continue
+        out.append("+define+" + arg[2:] if arg.startswith("-D") else arg)
+    return out
+
+
 #: Files in include directories that can change a model without being listed.
 HEADER_SUFFIXES = frozenset({".svh", ".vh", ".h", ".hpp", ".hh", ".inc"})
 

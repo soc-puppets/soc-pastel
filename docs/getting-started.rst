@@ -14,8 +14,8 @@ PASTEL itself is pure Python. Running tests in simulation needs:
    * - Python 3.10 to 3.13
      - Python 3.15 does not work yet: FuseSoC fails to start on it
    * - Verilator 5
-     - The simulator PASTEL supports so far. Tested with 5.020 (Ubuntu 24.04
-       package)
+     - Or Xcelium; see :doc:`guides/simulators`. Tested with Verilator 5.020
+       (Ubuntu 24.04 package)
    * - RISC-V GCC
      - ``riscv64-unknown-elf-`` prefix by default; set ``PASTEL_RISCV_PREFIX`` otherwise
    * - OpenOCD 0.12+

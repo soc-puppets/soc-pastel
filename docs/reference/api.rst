@@ -82,6 +82,18 @@ Simulation
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.sim.xcelium
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.vcs
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.questa
+   :members:
+   :show-inheritance:
+
 .. automodule:: soc_pastel.sim.session
    :members:
    :show-inheritance:

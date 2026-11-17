@@ -54,6 +54,26 @@ Verilator platform (``--platform=verilator``):
        are part of the model's identity, so changing them builds a new
        model.
 
+Xcelium (``--platform=xcelium``), VCS (``--platform=vcs``, experimental) and
+Questa (``--platform=questa``, experimental) have the same options, with their
+own names; see :doc:`../guides/simulators`.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--xcelium-workdir``, ``--vcs-workdir``, ``--questa-workdir``
+     - Where models are built (default ``.pastel/<platform>``).
+   * - ``--xrun``, ``--vcs``, ``--vsim``
+     - The simulator's executable. Questa's ``vlib``, ``vlog`` and ``vopt``
+       come from beside ``vsim``.
+   * - ``--xcelium-args``, ``--vcs-args``, ``--questa-args``
+     - Extra build arguments (elaboration, ``vcs``, ``vlog``), as one
+       shell-quoted string. Part of the model's identity.
+   * - ``--xcelium-build-prefix=<cmd>``
+     - Run Xcelium's elaboration under a command, e.g. ``srun -c 8``.
+
 Markers
 -------
 

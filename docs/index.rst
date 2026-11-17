@@ -20,6 +20,7 @@ in a *device pack*; the core knows nothing about any particular chip.
    concepts
    guides/writing-tests
    guides/firmware
+   guides/simulators
    guides/remote-simulation
 
 .. toctree::

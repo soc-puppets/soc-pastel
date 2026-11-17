@@ -28,7 +28,15 @@ import pytest
 
 from soc_pastel.core.errors import ConfigurationError
 
-from .simulator import PASTEL_CPP, PASTEL_HDL, SIM_CSRC, SIM_HW, SimulatorImage, SimulatorPlatform
+from .simulator import (
+    PASTEL_CPP,
+    PASTEL_HDL,
+    SIM_CSRC,
+    SIM_HW,
+    SimulatorImage,
+    SimulatorPlatform,
+    standard_source_args,
+)
 from .sources import SimSources
 
 #: An Xcelium error or fatal message, e.g. ``xmelab: *E,MULAXX (...)``.
@@ -37,19 +45,8 @@ XRUN_ERROR = re.compile(r"\*[EF],[A-Z0-9_]+")
 SNAPSHOT_WRITTEN = "Writing initial simulation snapshot"
 
 
-def xcelium_source_args(args: Sequence[str]) -> list[str]:
-    """Translate simulator-independent source args for xrun.
-
-    ``.vlt`` files (Verilator configuration) are dropped,
-    ``-D<name>[=<value>]`` becomes ``+define+<name>[=<value>]``, and files and
-    ``+incdir+`` pass through.
-    """
-    out = []
-    for arg in args:
-        if arg.endswith(".vlt"):
-            continue
-        out.append("+define+" + arg[2:] if arg.startswith("-D") else arg)
-    return out
+#: Kept for device packs that imported it from here.
+xcelium_source_args = standard_source_args
 
 
 def xcelium_include_dir() -> Path:
@@ -135,7 +132,7 @@ class XceliumImage(SimulatorImage):
             *self.extra_args,
             f"+incdir+{SIM_HW}",
             *map(str, PASTEL_HDL),
-            *xcelium_source_args(self.sources.args),
+            *standard_source_args(self.sources.args),
         ]  # fmt: skip
 
     def run_command(self) -> list[str]:
