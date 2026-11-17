@@ -91,7 +91,46 @@ from the header a SystemRDL flow generates rather than from hand-written
 
 Test firmware can then ``#include "my_chip_addrmap.h"``. The directories are
 searched after PASTEL's own headers, so they can't hide them, and before a
-test's ``include_dirs``. Changing any header in them rebuilds the firmware.
+test's ``include_dirs``.
+
+.. _how-firmware-is-built:
+
+How firmware is built
+---------------------
+
+**When:** each time a test calls ``firmware.build()`` or ``firmware.run()``.
+``firmware.run()`` builds first and only then touches the target, so the
+firmware is compiled before the simulator starts. A compile error fails the
+test in about a second, without starting a simulator or, with a farm
+launcher, submitting a job.
+
+**Where:** on the machine running pytest, into the test's run directory:
+
+.. code-block:: text
+
+   <run directory>/fw/<first source>-<code location>/
+       <first source>-<code location>.elf
+       build.log          the compiler command line, then its output
+       gen/memory_map.h   generated from the descriptor
+       gen/link.ld        generated from the code location
+
+**What:** one ``gcc`` call compiles and links PASTEL's runtime (start-up code,
+RTT, the mailbox, ``printf``) and the test's sources together. It uses:
+
+- ``-march``/``-mabi`` from the device's CPU, with ``-Os -g -Wall``
+- the generated ``memory_map.h``, included in every file
+- the include directories, searched in this order: the generated header, PASTEL's own,
+  the variant's ``fw_build`` hook, then the test's ``include_dirs``
+- the defines from the hook, then the test's
+
+**Nothing is cached.** Every build starts from scratch, so a test always runs
+firmware built from the sources and headers as they are now. A build takes
+about a second.
+
+**Errors and warnings:** a compile error fails the test with the compiler's
+messages and the path of ``build.log``. Warnings don't fail the test, but they
+are printed as soon as the build finishes, and ``build.log`` is listed if the
+test fails.
 
 Results and faults
 ------------------

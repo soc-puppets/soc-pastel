@@ -300,8 +300,11 @@ class Firmware:
 
 
 @pytest.fixture
-def firmware(request: pytest.FixtureRequest, harness: PlatformHarness) -> Firmware:
-    """Build and run firmware on the harness, at the selected code location."""
+def firmware(request: pytest.FixtureRequest, harness: PlatformHarness, tmp_path: Path) -> Firmware:
+    """Build and run firmware on the harness, at the selected code location.
+
+    Firmware is built from scratch, into the test's run directory (``fw/``),
+    whenever the test builds or runs it: always before the simulator starts.
+    """
     location = _option(request.config, "code_location") or harness.variant.code_locations[0].name
-    build_dir = Path(request.config.rootpath) / ".pastel" / "firmware" / harness.device.name
-    return Firmware(harness, Path(request.path).parent, build_dir, location)
+    return Firmware(harness, Path(request.path).parent, tmp_path / "fw", location)

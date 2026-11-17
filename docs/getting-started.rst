@@ -107,7 +107,7 @@ platforms it can run on.
 
 The first run fetches VeeRwolf (pinned to a tested commit) and its
 dependencies, and builds the simulation model: allow a few minutes. Later runs
-reuse both. Everything is cached under ``.pastel/`` in the current directory;
+reuse both. Models and sources are kept under ``.pastel/`` in the current directory;
 add it to ``.gitignore``.
 
 Useful options:

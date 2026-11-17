@@ -21,7 +21,7 @@ Where the logs are
      - In the test's pytest temporary directory, in the simulator's own
        format (``sim.fst`` with Verilator)
    * - Firmware build
-     - ``.pastel/firmware/<device>/<name>-<location>-<hash>/build.log``
+     - ``fw/<name>-<location>/build.log`` in the test's run directory``
 
 When a test fails, PASTEL prints its run directory (``/tmp/pytest-of-$USER/...``)
 and the logs in it straight away, and lists the run directories of every

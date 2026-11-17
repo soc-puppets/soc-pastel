@@ -127,9 +127,9 @@ Build options
 pack provides for every test, such as the chip's register map, come from the
 variant's ``fw_build`` hook (see :doc:`firmware`), so tests don't name them.
 
-Builds are cached under ``.pastel/firmware/`` by everything that goes into
-them: the sources, the headers in every include directory, the defines and
-the generated memory map. Regenerating a header rebuilds the firmware.
+Firmware is built from scratch every time a test builds or runs it, into the
+test's run directory, so a test never runs stale code; see
+:ref:`how-firmware-is-built`.
 
 Code locations
 ~~~~~~~~~~~~~~
