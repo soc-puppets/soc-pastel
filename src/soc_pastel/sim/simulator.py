@@ -37,6 +37,7 @@ from soc_pastel.core.util import file_lock
 
 from .handlers import Backdoor, BackdoorMemory, Pipe, PlatformControl
 from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
+from .logcheck import COMMAND_ECHO, COMMON_RUN_RULES, COMPILER_RULES, LogFindings, LogRules
 from .session import Listener, SocketEndpointSession, accept_session
 from .sources import SimSources, load_sim_sources
 
@@ -137,6 +138,9 @@ class SimulatorImage(PlatformImage):
     #: How long to wait for the model to appear after a successful build, for
     #: builds run on another machine whose output reaches us over NFS.
     APPEAR_TIMEOUT_S: ClassVar[float] = 30.0
+    #: What counts as an error or a warning in the build log (see
+    #: :mod:`soc_pastel.sim.logcheck`). Subclasses add their simulator's.
+    BUILD_RULES: ClassVar[LogRules] = COMPILER_RULES
 
     def __init__(
         self,
@@ -187,6 +191,19 @@ class SimulatorImage(PlatformImage):
         return self.dir / "build.log"
 
     @property
+    def build_rules(self) -> LogRules:
+        """This image's build-log rules: the simulator's plus the device pack's."""
+        return self.BUILD_RULES.merged(LogRules(ignore=(COMMAND_ECHO,))).merged(
+            self.sources.build_log
+        )
+
+    @property
+    def warnings(self) -> list[str]:
+        """The build's warnings, ``"<line>: <text>"``, kept with the model."""
+        path = self.dir / "warnings.txt"
+        return path.read_text().splitlines() if path.is_file() else []
+
+    @property
     @abstractmethod
     def exe(self) -> Path:
         """What runs the model: plusargs are appended to it. Built last."""
@@ -220,21 +237,30 @@ class SimulatorImage(PlatformImage):
                 return
             self.check_tool()
             self.dir.mkdir(parents=True, exist_ok=True)
+            (self.dir / "warnings.txt").unlink(missing_ok=True)
+            log.info("building the %s model %s", self.tool, self.key)
+            began = time.monotonic()
             with open(self.build_log, "w") as f:
                 for index, cmd in enumerate(self.steps()):
-                    f.write(shlex.join(cmd) + "\n\n")
+                    # One line, so no part of the echo can match a log rule.
+                    f.write("$ " + shlex.join(cmd).replace("\n", "\\n") + "\n\n")
                     f.flush()
                     start = f.tell()
                     result = subprocess.run(cmd, cwd=self.dir, stdout=f, stderr=subprocess.STDOUT)
                     f.flush()
                     if result.returncode != 0:
-                        raise ConfigurationError(
-                            f"{self.tool} build failed (see {self.build_log}):\n{self._tail()}"
-                        )
+                        self._fail(f"exited with status {result.returncode}")
                     with open(self.build_log, errors="replace") as r:
                         r.seek(start)
                         self.check_step(index, r.read())
                     f.write("\n")
+            findings = self.build_rules.check(self.build_log)
+            if findings.failed:
+                self._fail("reported errors", findings)
+            if findings.warnings:
+                (self.dir / "warnings.txt").write_text(
+                    "".join(f"{n}: {line.strip()}\n" for n, line in findings.warnings)
+                )
             self.finish()
             if not self._appeared():
                 raise ConfigurationError(
@@ -242,9 +268,23 @@ class SimulatorImage(PlatformImage):
                     f"{self.APPEAR_TIMEOUT_S:.0f} s. If it was built on another machine, this "
                     f"one's file system hasn't seen it yet (see {self.build_log}):\n{self._tail()}"
                 )
+            n = len(self.warnings)
+            log.info(
+                "built the %s model in %.0f s%s",
+                self.tool,
+                time.monotonic() - began,
+                f", with {n} warning{'s' if n != 1 else ''} (see {self.build_log})" if n else "",
+            )
 
     def _tail(self) -> str:
         return self.build_log.read_text(errors="replace")[-3000:]
+
+    def _fail(self, why: str, findings: LogFindings | None = None) -> None:
+        """Fail the build, leaving nothing that looks like a built model."""
+        self.exe.unlink(missing_ok=True)
+        findings = findings or self.build_rules.check(self.build_log)
+        detail = findings.describe() if findings.failed else self._tail()
+        raise ConfigurationError(f"{self.tool} build {why} (see {self.build_log}):\n{detail}")
 
     def _appeared(self) -> bool:
         """Wait for the model, re-listing its directory so NFS revalidates it."""
@@ -259,6 +299,10 @@ class SimulatorImage(PlatformImage):
             if time.monotonic() > deadline:
                 return False
             time.sleep(0.5)
+
+
+#: Models whose build warnings this process has already reported.
+_REPORTED_WARNINGS: set[Path] = set()
 
 
 class SimulatorPlatform(SimulationPlatform):
@@ -280,6 +324,9 @@ class SimulatorPlatform(SimulationPlatform):
     SIDECARS_FILE: ClassVar[str] = "sidecars.tsv"
     #: The simulator's output, in the run directory.
     LOG_FILE: ClassVar[str] = "sim.log"
+    #: What counts as an error or a warning in ``sim.log`` (see
+    #: :mod:`soc_pastel.sim.logcheck`). Subclasses add their simulator's.
+    RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES
 
     platform_handlers: ClassVar[Mapping[str, type[EndpointHandler]]] = {
         PlatformControl.type_name: PlatformControl,
@@ -298,6 +345,10 @@ class SimulatorPlatform(SimulationPlatform):
         self._session: SocketEndpointSession | None = None
         self._listener: Listener | None = None
         self._log = None
+        self._ran = False
+        #: The simulator's exit status once it has stopped, or None.
+        self.exit_status: int | None = None
+        self._forced = False  # stop() had to terminate or kill it
 
     @abstractmethod
     def make_image(self, sources: SimSources) -> SimulatorImage:
@@ -322,6 +373,24 @@ class SimulatorPlatform(SimulationPlatform):
         """The simulator's output for this run."""
         return self.run_dir / self.LOG_FILE
 
+    @property
+    def run_rules(self) -> LogRules:
+        """This run's log rules: the simulator's plus the device pack's."""
+        return self.RUN_RULES.merged(self.image().sources.run_log)
+
+    def check_run(self) -> LogFindings:
+        """Check the finished run: its log, and how the simulator exited.
+
+        A failing exit status counts as an error (line 0), unless PASTEL had to
+        terminate the simulator itself. Returns no findings if it never ran.
+        """
+        if not self._ran:
+            return LogFindings()
+        findings = self.run_rules.check(self.log_path)
+        if self.exit_status not in (None, 0) and not self._forced:
+            findings.errors.insert(0, (0, f"simulator exited with status {self.exit_status}"))
+        return findings
+
     def capabilities(self) -> frozenset[str]:
         """Backdoor and simulation time, plus waves when run with ``--waves``."""
         features = super().capabilities()
@@ -336,6 +405,22 @@ class SimulatorPlatform(SimulationPlatform):
     def start(self) -> None:  # noqa: D102
         image = self.image()
         image.build()
+        if image.warnings and image.dir not in _REPORTED_WARNINGS:
+            _REPORTED_WARNINGS.add(image.dir)
+            shown = "\n".join(f"  {w}" for w in image.warnings[:5])
+            more = len(image.warnings) - 5
+            log.warning(
+                "the %s model has %d build warning%s (see %s):\n%s%s",
+                self.name,
+                len(image.warnings),
+                "s" if len(image.warnings) != 1 else "",
+                image.build_log,
+                shown,
+                f"\n  ... and {more} more" if more > 0 else "",
+            )
+        self._ran = True
+        self.exit_status = None
+        self._forced = False
         remote = self._launcher.remote
         self._listener = Listener(
             bind="" if remote else "127.0.0.1",
@@ -353,6 +438,8 @@ class SimulatorPlatform(SimulationPlatform):
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
         self._proc = self._launcher.launch(args, run_dir, self._log)
+        log.info("simulator started; run directory %s", run_dir)
+        began = time.monotonic()
         try:
             self._session = accept_session(
                 self._listener,
@@ -365,6 +452,7 @@ class SimulatorPlatform(SimulationPlatform):
             self._log.flush()
             tail = log_path.read_text(errors="replace")[-2000:].strip()
             raise type(e)(f"{e}; see {log_path}" + (f":\n{tail}" if tail else "")) from None
+        log.info("simulator connected after %.1f s", time.monotonic() - began)
 
     def stop(self) -> None:  # noqa: D102
         if self._session is not None:
@@ -382,9 +470,11 @@ class SimulatorPlatform(SimulationPlatform):
                     self._proc.wait(timeout=10)
                     break
                 except subprocess.TimeoutExpired:
+                    self._forced = True
                     escalate()
             else:
                 self._proc.wait()
+            self.exit_status = self._proc.poll()
             self._proc = None
         if self._listener is not None:
             self._listener.close()

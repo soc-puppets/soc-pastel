@@ -28,10 +28,10 @@ def test_vcs_command(tmp_path):
 
 
 def test_vcs_errors_fail_the_build(tmp_path):
-    img = VcsImage(SOURCES, tmp_path, "vcs")
-    img.check_step(0, "Warning-[TFIPC] Too few instance port connections\n")
-    with pytest.raises(ConfigurationError, match=r"Error-\[SE\]"):
-        img.check_step(0, "Parsing design file\nError-[SE] Syntax error\n")
+    rules = VcsImage(SOURCES, tmp_path, "vcs").build_rules
+    warned = rules.check_text("Warning-[TFIPC] Too few instance port connections\n")
+    assert not warned.failed and len(warned.warnings) == 1
+    assert rules.check_text("Parsing design file\nError-[SE] Syntax error\n").failed
 
 
 @pytest.fixture
@@ -72,12 +72,10 @@ def test_questa_run_script(tmp_path, questa_install):
 
 
 def test_questa_errors_fail_the_build(tmp_path):
-    img = QuestaImage(SOURCES, tmp_path, "vsim")
-    img.check_step(1, "** Warning: tb.sv(4): (vlog-2600) unused\n")
-    with pytest.raises(ConfigurationError, match=r"\*\* Error"):
-        img.check_step(1, "** Error: tb.sv(3): near ';': syntax error\n")
-    with pytest.raises(ConfigurationError, match=r"\*\* Fatal"):
-        img.check_step(2, "** Fatal: (vopt-1) top not found\n")
+    rules = QuestaImage(SOURCES, tmp_path, "vsim").build_rules
+    assert not rules.check_text("** Warning: tb.sv(4): (vlog-2600) unused\n").failed
+    assert rules.check_text("** Error: tb.sv(3): near ';': syntax error\n").failed
+    assert rules.check_text("** Fatal: (vopt-1) top not found\n").failed
 
 
 def test_missing_questa_svdpi_is_explained(monkeypatch):

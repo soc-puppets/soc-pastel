@@ -69,6 +69,11 @@ class PlatformHarness:
             raise CapabilityError(f"harness needs an {ON_CHIP_DEBUG!r} interface")
 
     @property
+    def started(self) -> bool:
+        """True once the platform has been started (even if it has since stopped)."""
+        return self._started
+
+    @property
     def platform(self) -> Platform:
         """The platform, started if the harness hasn't been opened yet."""
         self._open_on_first_use()

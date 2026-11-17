@@ -51,6 +51,49 @@ What every simulator platform shares
   :doc:`remote-simulation`). The simulator's output goes to ``sim.log`` in the
   test's run directory.
 
+Logs are checked
+----------------
+
+Every model's build log, and every test's ``sim.log``, are checked for the
+simulator's error and warning messages:
+
+- **Build:** any error fails the build, even if the tool exited successfully.
+  Warnings are reported when the model is built, and once per run of pytest
+  after that, with the path of ``build.log``.
+- **Run:** once the simulator has exited, any error in ``sim.log`` fails the
+  test. That includes ``$error``/``$fatal`` messages, assertion failures,
+  ``UVM_ERROR``/``UVM_FATAL`` and ``OVL_ERROR``, and a failing exit status.
+  The test fails itself, not as an error in teardown. If the test had already
+  failed, the log errors are reported but don't replace its own failure.
+  Warnings are reported.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Platform
+     - Errors
+     - Warnings
+   * - ``verilator``
+     - ``%Error``, ``%Fatal``
+     - ``%Warning``
+   * - ``xcelium``
+     - ``*E,``, ``*F,``; the build must print "Writing initial simulation
+       snapshot"
+     - ``*W,``
+   * - ``vcs``
+     - ``Error-[...]``, ``Error: "``, ``Fatal: "``
+     - ``Warning-[...]``, ``Lint-[...]``, ``Warning: "``
+   * - ``questa``
+     - ``** Error``, ``** Fatal``
+     - ``** Warning``
+
+Builds also check C and C++ compiler diagnostics (``error:``, ``warning:``).
+Every run also checks UVM and OVL messages and PASTEL's own (``pastel: cannot
+...``). UVM's end-of-test summary lines with a count of 0 aren't errors.
+
+A device pack adds its own rules, or waives harmless messages, in its
+``sim_sources`` hook; see :ref:`adding log rules <log-rules>`.
+
 Verilator
 ---------
 

@@ -24,6 +24,7 @@ from .errors import (
     PastelError,
     PastelTimeout,
     ProtocolError,
+    SimulatorError,
     TargetError,
 )
 from .harness import PlatformHarness
@@ -68,6 +69,7 @@ __all__ = [
     "RegionKind",
     "Sidecar",
     "SimulationPlatform",
+    "SimulatorError",
     "TargetError",
     "TargetState",
     "Variant",

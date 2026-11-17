@@ -17,8 +17,7 @@ from typing import ClassVar
 
 import pytest
 
-from soc_pastel.core.errors import ConfigurationError
-
+from .logcheck import COMMON_RUN_RULES, COMPILER_RULES, LogRules
 from .simulator import (
     PASTEL_CPP,
     PASTEL_HDL,
@@ -31,7 +30,9 @@ from .simulator import (
 from .sources import SimSources
 
 #: A VCS error message, e.g. ``Error-[SE] Syntax error``.
-VCS_ERROR = re.compile(r"^Error-\[", re.M)
+VCS_ERROR = re.compile(r"^Error-\[")
+#: A VCS warning or lint message, e.g. ``Warning-[TFIPC] ...``.
+VCS_WARNING = re.compile(r"^(Warning|Lint)-\[")
 
 
 class VcsImage(SimulatorImage):
@@ -39,6 +40,9 @@ class VcsImage(SimulatorImage):
 
     tool: ClassVar[str] = "vcs"
     TOOL_ENV: ClassVar[tuple[str, ...]] = (*SimulatorImage.TOOL_ENV, "VCS_HOME")
+    BUILD_RULES: ClassVar[LogRules] = COMPILER_RULES.merged(
+        LogRules(errors=(VCS_ERROR.pattern,), warnings=(VCS_WARNING.pattern,))
+    )
 
     def __init__(
         self,
@@ -77,14 +81,6 @@ class VcsImage(SimulatorImage):
     def steps(self) -> list[list[str]]:  # noqa: D102
         return [self.command()]
 
-    def check_step(self, index: int, output: str) -> None:
-        """Any ``Error-[...]`` fails the build, whatever the exit status."""
-        errors = [ln for ln in output.splitlines() if VCS_ERROR.match(ln)]
-        if errors:
-            raise ConfigurationError(
-                f"VCS build failed (see {self.build_log}):\n" + "\n".join(errors[:20])
-            )
-
 
 class VcsPlatform(SimulatorPlatform):
     """Run the device variant's testbench under VCS. Experimental: untested.
@@ -98,6 +94,13 @@ class VcsPlatform(SimulatorPlatform):
 
     name: ClassVar[str] = "vcs"
     WAVES_FILE: ClassVar[str] = "sim.vcd"
+    #: $error/$fatal print ``Error: "file", line: ...``; VCS's own ``Error-[...]``.
+    RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
+        LogRules(
+            errors=(VCS_ERROR.pattern, r'^(Error|Fatal): "'),
+            warnings=(VCS_WARNING.pattern, r'^Warning: "'),
+        )
+    )
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102

@@ -25,6 +25,7 @@ import pytest
 
 from soc_pastel.core.errors import ConfigurationError
 
+from .logcheck import COMMON_RUN_RULES, COMPILER_RULES, LogRules
 from .simulator import (
     PASTEL_CPP,
     PASTEL_HDL,
@@ -36,8 +37,11 @@ from .simulator import (
 )
 from .sources import SimSources
 
-#: A Questa error or fatal message, e.g. ``** Error: tb.sv(3): ...``.
-QUESTA_ERROR = re.compile(r"^\*\* (Error|Fatal)", re.M)
+#: A Questa error or fatal message, e.g. ``** Error: tb.sv(3): ...``, with or
+#: without the ``#`` that vsim puts at the start of its transcript lines.
+QUESTA_ERROR = re.compile(r"^(# )?\*\* (Error|Fatal)")
+#: A Questa warning, e.g. ``** Warning: (vlog-2600) ...``.
+QUESTA_WARNING = re.compile(r"^(# )?\*\* Warning")
 
 
 def questa_include_dir(vsim: str) -> Path:
@@ -63,6 +67,9 @@ class QuestaImage(SimulatorImage):
     tool: ClassVar[str] = "questa"
     TOOL_ENV: ClassVar[tuple[str, ...]] = (*SimulatorImage.TOOL_ENV, "QUESTA_HOME", "MTI_HOME")
     OPTIMISED: ClassVar[str] = "pastel_opt"
+    BUILD_RULES: ClassVar[LogRules] = COMPILER_RULES.merged(
+        LogRules(errors=(QUESTA_ERROR.pattern,), warnings=(QUESTA_WARNING.pattern,))
+    )
 
     def __init__(
         self,
@@ -126,14 +133,6 @@ class QuestaImage(SimulatorImage):
             "-do", "run -all; quit -f",
         ]  # fmt: skip
 
-    def check_step(self, index: int, output: str) -> None:
-        """Any ``** Error`` or ``** Fatal`` fails the build, whatever the exit status."""
-        errors = [ln for ln in output.splitlines() if QUESTA_ERROR.match(ln)]
-        if errors:
-            raise ConfigurationError(
-                f"Questa build failed (see {self.build_log}):\n" + "\n".join(errors[:20])
-            )
-
     def finish(self) -> None:
         """Write the run script (last: its presence means "built")."""
         tmp = self.exe.with_suffix(".tmp")
@@ -154,6 +153,9 @@ class QuestaPlatform(SimulatorPlatform):
 
     name: ClassVar[str] = "questa"
     WAVES_FILE: ClassVar[str] = "sim.vcd"
+    RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
+        LogRules(errors=(QUESTA_ERROR.pattern,), warnings=(QUESTA_WARNING.pattern,))
+    )
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102

@@ -450,6 +450,24 @@ which other simulators ignore. Arguments for one simulator only go in
 VeeRwolf's hook uses it to let FuseSoC generate the VeeR configuration and
 resolve dependencies; see ``soc_pastel_veerwolf/sim.py``.
 
+.. _log-rules:
+
+Build and run logs are checked for errors and warnings (see
+:doc:`simulators`). If the testbench prints its own error messages, or a
+simulator warns about something harmless, add rules in ``SimSources``. Each
+entry is a regular expression searched per line:
+
+.. code-block:: python
+
+   from soc_pastel.sim.logcheck import LogRules
+
+   return SimSources(
+       top="my_chip_tb",
+       args=tuple(args),
+       run_log=LogRules(errors=(r"^TB ERROR:",), ignore=(r"\*W,CUVWSP .*u_pad_ring",)),
+       build_log=LogRules(ignore=(r"%Warning-UNOPTFLAT",)),
+   )
+
 If the sources differ between simulators, for example a behavioural model
 that only one simulator can compile, give the hook a ``platform`` keyword
 argument. PASTEL then passes the platform's name, so one variant serves every

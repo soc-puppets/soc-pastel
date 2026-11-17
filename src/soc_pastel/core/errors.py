@@ -31,6 +31,18 @@ class ProtocolError(PastelError):
     """A host/target or host/simulator protocol was violated (bad frame, version)."""
 
 
+class SimulatorError(PastelError):
+    """The simulation reported errors in its log, or exited with a failure status.
+
+    Attributes:
+        log: The simulator's log for the run.
+    """
+
+    def __init__(self, message: str, log: object = None) -> None:
+        super().__init__(message)
+        self.log = log
+
+
 class PastelTimeout(PastelError):
     """A PASTEL timeout expired.
 

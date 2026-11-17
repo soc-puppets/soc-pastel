@@ -15,6 +15,7 @@ A test whose requirements the harness cannot meet is skipped, not failed.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Iterator, Mapping
 from importlib import import_module
 from pathlib import Path
@@ -24,7 +25,7 @@ import pytest
 
 from .core import registry
 from .core.device import Device
-from .core.errors import ConfigurationError
+from .core.errors import ConfigurationError, SimulatorError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
 
@@ -80,6 +81,56 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             registry.platform(name).add_options(parser)
         except ConfigurationError:
             pass  # reported properly when the platform is selected
+
+
+log = logging.getLogger("soc_pastel")
+
+
+def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
+    """Stop the test's platform and check how the simulation went.
+
+    Errors in the simulator's log (or a failing exit status) fail a test that
+    otherwise passed. If the test already failed, they're only logged, so the
+    original failure isn't hidden.
+    """
+    __tracebackhide__ = True
+    harness = getattr(item, "funcargs", {}).get("harness")
+    if not isinstance(harness, PlatformHarness) or not harness.started:
+        return
+    try:
+        harness.close()
+    except Exception:
+        if not test_failed:
+            raise
+        log.exception("closing the harness failed")
+    platform = harness.platform  # closed: doesn't start it again
+    check_run = getattr(platform, "check_run", None)
+    if check_run is None:
+        return
+    findings = check_run()
+    if findings.warnings:
+        log.warning("simulation log %s", findings.describe(max_lines=5))
+    if findings.failed:
+        message = f"simulation reported errors:\n{findings.describe()}"
+        if test_failed:
+            log.error(message)
+        else:
+            raise SimulatorError(message, findings.path)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item):
+    """Check the simulation as part of the test, so its errors fail the test itself."""
+    __tracebackhide__ = True
+    try:
+        result = yield
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        _finish_simulation(item, test_failed=True)
+        raise
+    _finish_simulation(item, test_failed=False)
+    return result
 
 
 @pytest.hookimpl(tryfirst=True)

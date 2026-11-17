@@ -66,13 +66,16 @@ def test_missing_svdpi_is_explained(monkeypatch):
 
 
 def test_elaboration_output_is_checked(tmp_path):
-    img = image(tmp_path)
-    img.check_step(0, "")  # the DPI build isn't checked this way
-    img.check_step(1, f"xmelab ...\n{SNAPSHOT_WRITTEN}: worklib.tb:sv\n")
-    with pytest.raises(ConfigurationError, match=r"\*E,MULAXX"):
-        img.check_step(1, f"xmelab: *E,MULAXX (tb.sv,3|5): bad\n{SNAPSHOT_WRITTEN}\n")
-    with pytest.raises(ConfigurationError, match="no 'Writing initial"):
-        img.check_step(1, "xrun: exiting\n")
+    rules = image(tmp_path).build_rules
+    assert not rules.check_text(f"xmelab ...\n{SNAPSHOT_WRITTEN}: worklib.tb:sv\n").failed
+    bad = rules.check_text(f"xmelab: *E,MULAXX (tb.sv,3|5): bad\n{SNAPSHOT_WRITTEN}\n")
+    assert bad.failed and "*E,MULAXX" in bad.describe()
+    missing = rules.check_text("xrun: exiting\n")
+    assert missing.failed and missing.missing == [SNAPSHOT_WRITTEN]
+    warned = rules.check_text(f"xmelab: *W,CUVWSP (tb.sv,1|2): port\n{SNAPSHOT_WRITTEN}\n")
+    assert not warned.failed and len(warned.warnings) == 1
+    echoed = rules.check_text(f"$ xrun -nowarn *E,FOO\n{SNAPSHOT_WRITTEN}\n")
+    assert not echoed.failed  # PASTEL's own command echo is never an error
 
 
 def test_run_script(tmp_path):
@@ -130,6 +133,6 @@ def test_build_runs_every_step_then_writes_the_run_script(tmp_path, monkeypatch,
         log = img.build_log.read_text()
         assert log.index("-shared") < log.index("-elaborate")  # both steps, in order
     else:
-        with pytest.raises(ConfigurationError, match="elaboration failed"):
+        with pytest.raises(ConfigurationError, match="reported errors"):
             img.build()
         assert not img.is_built()

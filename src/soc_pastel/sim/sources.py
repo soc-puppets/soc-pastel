@@ -23,6 +23,8 @@ from pathlib import Path
 from soc_pastel.core.device import Variant
 from soc_pastel.core.errors import ConfigurationError
 
+from .logcheck import LogRules
+
 
 @dataclass(frozen=True)
 class SimSources:
@@ -40,12 +42,18 @@ class SimSources:
             platform name, e.g. ``{"verilator": ("-CFLAGS", "-fcoroutines")}``.
             Each platform passes only its own, after PASTEL's options and
             before the sources.
+        build_log: Extra rules for the model's build log, added to the
+            platform's (see :mod:`soc_pastel.sim.logcheck`): the testbench's
+            own error messages, or ``ignore`` patterns for harmless ones.
+        run_log: Extra rules for each run's ``sim.log``, likewise.
     """
 
     top: str
     args: tuple[str, ...]
     key: str = ""
     tool_args: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    build_log: LogRules | None = None
+    run_log: LogRules | None = None
 
 
 def load_sim_sources(variant: Variant, workdir: Path, platform: str | None = None) -> SimSources:

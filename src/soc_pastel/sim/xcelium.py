@@ -28,6 +28,7 @@ import pytest
 
 from soc_pastel.core.errors import ConfigurationError
 
+from .logcheck import COMMON_RUN_RULES, COMPILER_RULES, LogRules
 from .simulator import (
     PASTEL_CPP,
     PASTEL_HDL,
@@ -41,6 +42,8 @@ from .sources import SimSources
 
 #: An Xcelium error or fatal message, e.g. ``xmelab: *E,MULAXX (...)``.
 XRUN_ERROR = re.compile(r"\*[EF],[A-Z0-9_]+")
+#: An Xcelium warning, e.g. ``xmelab: *W,CUVWSP (...)``.
+XRUN_WARNING = re.compile(r"\*W,[A-Z0-9_]+")
 #: What xmelab prints once it has written the snapshot that ``xrun -R`` runs.
 SNAPSHOT_WRITTEN = "Writing initial simulation snapshot"
 
@@ -79,6 +82,16 @@ class XceliumImage(SimulatorImage):
 
     tool: ClassVar[str] = "xcelium"
     TOOL_ENV: ClassVar[tuple[str, ...]] = (*SimulatorImage.TOOL_ENV, "XCELIUM_HOME")
+    #: Elaboration must report no errors and must have written the snapshot.
+    #: The exit status alone isn't trusted: a batch wrapper may not pass it
+    #: on, and a missing snapshot only shows up later as ``*F,NOSNAP``.
+    BUILD_RULES: ClassVar[LogRules] = COMPILER_RULES.merged(
+        LogRules(
+            errors=(XRUN_ERROR.pattern,),
+            warnings=(XRUN_WARNING.pattern,),
+            required=(SNAPSHOT_WRITTEN,),
+        )
+    )
 
     def __init__(
         self,
@@ -149,19 +162,6 @@ class XceliumImage(SimulatorImage):
     def steps(self) -> list[list[str]]:  # noqa: D102
         return [self.dpi_command(), self.elaborate_command()]
 
-    def check_step(self, index: int, output: str) -> None:
-        """Elaboration must report no errors and must have written the snapshot.
-
-        The exit status alone isn't trusted: a batch wrapper may not pass it
-        on, and a missing snapshot only shows up later as ``*F,NOSNAP``.
-        """
-        if index != 1:
-            return
-        errors = [ln.strip() for ln in output.splitlines() if XRUN_ERROR.search(ln)]
-        if errors or SNAPSHOT_WRITTEN not in output:
-            why = "\n".join(errors[:20]) or f"no {SNAPSHOT_WRITTEN!r} line"
-            raise ConfigurationError(f"Xcelium elaboration failed (see {self.build_log}):\n{why}")
-
     def finish(self) -> None:
         """Write the run script (last: its presence means "built")."""
         tmp = self.exe.with_suffix(".tmp")
@@ -186,6 +186,9 @@ class XceliumPlatform(SimulatorPlatform):
 
     name: ClassVar[str] = "xcelium"
     WAVES_FILE: ClassVar[str] = "sim.trn"  # open this in SimVision
+    RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
+        LogRules(errors=(XRUN_ERROR.pattern,), warnings=(XRUN_WARNING.pattern,))
+    )
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102

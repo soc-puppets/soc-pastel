@@ -9,6 +9,7 @@ from typing import ClassVar
 
 import pytest
 
+from .logcheck import COMMON_RUN_RULES, COMPILER_RULES, LogRules
 from .simulator import (  # noqa: F401 - re-exported; device packs import these from here
     GPIO_HW,
     OCD_HW,
@@ -33,6 +34,9 @@ class VerilatorImage(SimulatorImage):
 
     tool: ClassVar[str] = "verilator"
     TOOL_ENV: ClassVar[tuple[str, ...]] = (*SimulatorImage.TOOL_ENV, "VERILATOR_ROOT")
+    BUILD_RULES: ClassVar[LogRules] = COMPILER_RULES.merged(
+        LogRules(errors=(r"%Error",), warnings=(r"%Warning",))
+    )
 
     def __init__(
         self,
@@ -98,6 +102,9 @@ class VerilatorPlatform(SimulatorPlatform):
 
     name: ClassVar[str] = "verilator"
     WAVES_FILE: ClassVar[str] = "sim.fst"
+    RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
+        LogRules(errors=(r"%(Error|Fatal)",), warnings=(r"%Warning",))
+    )
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102
