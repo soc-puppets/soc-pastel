@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("soc_pastel.firmware")
 
-MAILBOX_VERSION = 1
+MAILBOX_VERSION = 2
 TEXT_CHANNEL, MAILBOX_CHANNEL = 0, 1
 
 
@@ -33,6 +33,7 @@ class Mbox(IntEnum):
     FINISH = 0x04
     FAULT = 0x05
     WAVES = 0x06
+    ERROR = 0x07
     HOST_DATA = 0x81
     HOST_ACK = 0x82
     HOST_WAVES = 0x83
@@ -43,21 +44,50 @@ class FirmwareResult:
     """What a firmware run produced.
 
     Attributes:
-        result: ``test_main``'s return value; 0 means pass.
+        result: ``test_main``'s return value (or ``pastel_finish``'s).
+        errors: Errors the firmware reported (``PASTEL_ERROR``, a failed
+            ``PASTEL_CHECK`` or ``PASTEL_ASSERT``), in order.
         output: Everything the firmware printed.
         checkpoints: Checkpoint ids in the order reported.
         data: Payloads of ``pastel_send`` calls, in order.
     """
 
     result: int
+    errors: list[str] = field(default_factory=list)
     output: str = ""
     checkpoints: list[int] = field(default_factory=list)
     data: list[bytes] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
-        """True if ``test_main`` returned 0."""
-        return self.result == 0
+        """True if ``test_main`` returned 0 and the firmware reported no errors."""
+        return self.result == 0 and not self.errors
+
+    def describe(self, output_lines: int = 20) -> str:
+        """Why the firmware failed (or that it passed), with the end of its output."""
+        out = [f"test_main returned {self.result}"] if self.result else []
+        if self.errors:
+            out.append(f"{len(self.errors)} error{'s' if len(self.errors) != 1 else ''}:")
+            out += [f"  {e}" for e in self.errors]
+        lines = self.output.rstrip("\n").splitlines()
+        if lines:
+            shown = lines[-output_lines:]
+            cut = f" (last {len(shown)} lines)" if len(lines) > len(shown) else ""
+            out.append(f"output{cut}:")
+            out += [f"  {line}" for line in shown]
+        return "\n".join(out) or "passed"
+
+
+class FirmwareFailed(TargetError):
+    """The firmware finished, but failed: a non-zero result, or errors it reported.
+
+    Attributes:
+        result: The :class:`FirmwareResult`.
+    """
+
+    def __init__(self, result: FirmwareResult) -> None:
+        super().__init__(f"firmware failed: {result.describe()}")
+        self.result = result
 
 
 class FirmwareFault(TargetError):
@@ -124,12 +154,17 @@ def run_firmware(
                 if payload[:1] != bytes([MAILBOX_VERSION]):
                     raise ProtocolError(f"firmware mailbox version {payload[:1]!r} unsupported")
             elif mid == Mbox.CHECKPOINT:
-                (cp,) = struct.unpack("<I", payload)
+                cp, wait = struct.unpack("<IB", payload)
                 result.checkpoints.append(cp)
-                log.info("checkpoint %d", cp)
+                log.info("checkpoint %d%s", cp, " (waiting)" if wait else "")
                 if on_checkpoint:
                     on_checkpoint(cp)
-                send(Mbox.HOST_ACK, payload)
+                if wait:  # an ack for one that didn't wait would be left over
+                    send(Mbox.HOST_ACK, payload[:4])
+            elif mid == Mbox.ERROR:
+                message = payload.decode(errors="replace")
+                result.errors.append(message)
+                log.error("firmware error: %s", message)
             elif mid == Mbox.WAVES:
                 on = harness.platform.set_waves(payload[:1] != b"\x00")
                 send(Mbox.HOST_WAVES, bytes([on]))

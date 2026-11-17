@@ -75,7 +75,10 @@ returns a :py:class:`~soc_pastel.fw.runner.FirmwareResult`:
    * - ``result``
      - ``test_main``'s return value
    * - ``passed``
-     - ``result == 0``
+     - ``result == 0`` and no ``errors``
+   * - ``errors``
+     - Errors the firmware reported (``PASTEL_ERROR``, a failed
+       ``PASTEL_CHECK`` or ``PASTEL_ASSERT``), in order
    * - ``output``
      - Everything printed with ``pastel_printf``
    * - ``checkpoints``
@@ -83,10 +86,38 @@ returns a :py:class:`~soc_pastel.fw.runner.FirmwareResult`:
    * - ``data``
      - Payloads sent with ``pastel_send``, in order
 
+If the firmware fails, ``firmware.run()`` fails the test with
+:py:class:`~soc_pastel.fw.runner.FirmwareFailed`. The message gives the
+result, every error the firmware reported, and the end of its output. A test
+that checks a failure passes ``expect_pass=False`` and gets the result back
+instead:
+
+.. code-block:: python
+
+   def test_bad_config_is_rejected(firmware):
+       result = firmware.run("fw/bad_config.c", expect_pass=False)
+       assert result.result == 3
+
 An unexpected exception in the firmware raises
 :py:class:`~soc_pastel.fw.runner.FirmwareFault`, with ``cause``, ``pc`` and
 ``tval``. Not finishing within ``timeout_s`` (default 300 s, wall clock) raises
 :py:class:`~soc_pastel.core.errors.PastelTimeout`.
+
+How a test passes or fails
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A test passes only if all of these hold:
+
+- **Its own assertions pass.** It's a pytest test.
+- **The firmware builds.** Errors fail the test with the compiler's messages.
+  Warnings are printed but don't fail it.
+- **The firmware passes:** ``test_main`` returns 0 and nothing reported an
+  error. ``firmware.run()`` checks this unless given ``expect_pass=False``.
+- **The firmware finishes in time and doesn't fault.**
+- **The model builds cleanly:** no errors in its build log.
+- **The simulation is clean:** once the test has finished, ``sim.log`` has no
+  error messages (``$error``, ``$fatal``, assertion failures, ``UVM_ERROR``,
+  ...) and the simulator exited successfully. See :doc:`simulators`.
 
 Doing things at a known point
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

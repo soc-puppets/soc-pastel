@@ -3,7 +3,7 @@
 import pytest
 
 from soc_pastel.core.loader import elf_symbol, memory_for
-from soc_pastel.fw.runner import FirmwareFault
+from soc_pastel.fw.runner import FirmwareFailed, FirmwareFault
 
 
 def test_hello(firmware):
@@ -17,9 +17,31 @@ def test_hello(firmware):
 
 
 def test_nonzero_result_is_reported(firmware):
-    result = firmware.run("fw/fail.c")
+    result = firmware.run("fw/fail.c", expect_pass=False)
     assert not result.passed
     assert result.result == 7
+    with pytest.raises(FirmwareFailed, match="test_main returned 7"):
+        firmware.run("fw/fail.c")
+
+
+def test_checks_and_errors_carry_on_and_fail_the_test(firmware):
+    result = firmware.run("fw/checks.c", expect_pass=False)
+    assert result.result == 0 and not result.passed
+    assert result.errors == [
+        "checks.c:9: CHECK failed: three == 4",
+        "checks.c:10: CHECK failed: three < 0: three is 3",
+        "custom error beef",
+    ]
+    assert "checking 3 things\n" in result.output and "still running" in result.output
+    with pytest.raises(FirmwareFailed, match="3 errors"):
+        firmware.run("fw/checks.c")
+
+
+def test_assert_ends_the_test(firmware):
+    result = firmware.run("fw/checks.c", defines=["PASTEL_ASSERT_TEST"], expect_pass=False)
+    assert result.result != 0
+    assert result.errors[-1] == "checks.c:13: ASSERT failed: three == 5: stop here"
+    assert "not reached" not in result.output and "still running" not in result.output
 
 
 def test_fault_is_reported(firmware):

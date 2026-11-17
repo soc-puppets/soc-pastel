@@ -284,6 +284,7 @@ class Firmware:
         defines: Iterable[str] = (),
         stack_size: int | None = None,
         timeout_s: float = 300.0,
+        expect_pass: bool = True,
         **kwargs: Any,
     ):
         """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
@@ -291,12 +292,22 @@ class Firmware:
         ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; ``timeout_s``
         and the rest (``on_checkpoint``, ...) to
         :func:`~soc_pastel.fw.runner.run_firmware`.
+
+        Fails the test with :class:`~soc_pastel.fw.runner.FirmwareFailed` if
+        the firmware returns non-zero or reports errors, unless
+        ``expect_pass=False``, for tests that check a failure.
         """
+        __tracebackhide__ = True
         from .fw.runner import run_firmware
 
         build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
         elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
-        return run_firmware(self.harness, elf, timeout_s=timeout_s, **kwargs)
+        result = run_firmware(self.harness, elf, timeout_s=timeout_s, **kwargs)
+        if expect_pass and not result.passed:
+            from .fw.runner import FirmwareFailed
+
+            raise FirmwareFailed(result)
+        return result
 
 
 @pytest.fixture

@@ -23,6 +23,17 @@ The API
      - ``%d %i %u %x %X %p %s %c %%``, with ``0`` flag and width
    * - ``pastel_puts(s)``
      - Print a line
+   * - ``PASTEL_INFO(fmt, ...)``
+     - Print a line (``pastel_printf`` plus a newline)
+   * - ``PASTEL_ERROR(fmt, ...)``
+     - Report an error and carry on. The test fails.
+   * - ``PASTEL_CHECK(expr)``, ``PASTEL_CHECK(expr, fmt, ...)``
+     - If ``expr`` is false, report ``file.c:12: CHECK failed: expr: message``
+       and carry on. The test fails.
+   * - ``PASTEL_ASSERT(expr)``, ``PASTEL_ASSERT(expr, fmt, ...)``
+     - Like ``PASTEL_CHECK``, then end the test at once
+   * - ``pastel_snprintf(buf, size, fmt, ...)``
+     - Format into a buffer
    * - ``pastel_checkpoint(id, wait)``
      - Report a checkpoint; if ``wait``, block until the host acknowledges
    * - ``pastel_waves(enable)``
@@ -34,6 +45,21 @@ The API
      - End the test now with ``result`` (what returning from ``test_main`` does)
    * - ``pastel_read32(addr)``, ``pastel_write32(addr, v)``
      - Volatile register access
+
+Errors reach the host as they happen. They appear in the test's output at
+once, and fail the test even if ``test_main`` returns 0. Use ``PASTEL_CHECK``
+to check several things and see every failure, and ``PASTEL_ASSERT`` when going
+on makes no sense. An error message longer than 255 bytes is cut short.
+
+.. code-block:: c
+
+   int test_main(void) {
+     uint32_t id = pastel_read32(CHIP_ID);
+     PASTEL_ASSERT(id != 0, "no chip ID");
+     PASTEL_CHECK(id >> 16 == 0x1234, "vendor 0x%04x", id >> 16);
+     PASTEL_CHECK((id & 0xffff) >= 2, "revision %u too old", id & 0xffff);
+     return 0;
+   }
 
 There is no C library; ``memcpy``, ``memset``, ``memmove`` and ``memcmp`` are
 provided. Output goes into a buffer the host drains while the firmware runs,

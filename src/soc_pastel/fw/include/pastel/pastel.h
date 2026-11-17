@@ -9,6 +9,7 @@
 #ifndef PASTEL_H
 #define PASTEL_H
 
+#include <stdarg.h>
 #include <stdint.h>
 
 #include "pastel/mailbox.h"
@@ -16,6 +17,38 @@
 // printf subset: %d %i %u %x %X %p %s %c %%, with optional '0' flag and width.
 void pastel_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void pastel_puts(const char *s);
+// Format into buf (always NUL-terminated if size > 0); return the full length.
+int pastel_snprintf(char *buf, uint32_t size, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+int pastel_vsnprintf(char *buf, uint32_t size, const char *fmt, va_list ap);
+
+// --- Messages, errors and checks ------------------------------------------------
+//
+// PASTEL_INFO(fmt, ...)         print a line (pastel_printf plus a newline)
+// PASTEL_ERROR(fmt, ...)        report an error and carry on; the test fails
+// PASTEL_CHECK(expr[, fmt, ...]) if expr is false, report
+//                               "file.c:12: CHECK failed: expr: message" and
+//                               carry on; the test fails
+// PASTEL_ASSERT(expr[, fmt, ...]) the same, then end the test at once
+//
+// Errors go to the host as they happen, so they appear in the test log at
+// once and fail the test even if test_main returns 0. Messages longer than
+// 255 bytes are cut short.
+#define PASTEL_INFO(...) pastel_info(__VA_ARGS__)
+#define PASTEL_ERROR(...) pastel_error(__VA_ARGS__)
+#define PASTEL_CHECK(expr, ...)                                                    \
+  do {                                                                             \
+    if (!(expr)) pastel_check_failed(0, __FILE__, __LINE__, #expr, "" __VA_ARGS__); \
+  } while (0)
+#define PASTEL_ASSERT(expr, ...)                                                   \
+  do {                                                                             \
+    if (!(expr)) pastel_check_failed(1, __FILE__, __LINE__, #expr, "" __VA_ARGS__); \
+  } while (0)
+
+void pastel_info(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void pastel_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void pastel_check_failed(int fatal, const char *file, int line, const char *expr,
+                         const char *fmt, ...) __attribute__((format(printf, 5, 6)));
 
 // Send opaque data to the host test (PASTEL_MBOX_DATA).
 void pastel_send(const void *data, uint8_t length);

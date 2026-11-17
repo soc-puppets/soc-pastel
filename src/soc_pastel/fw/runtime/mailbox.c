@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "pastel/mailbox.h"
 
+#include <stdarg.h>
+
 #include "pastel/pastel.h"
 #include "pastel/port.h"
 #include "rtt.h"
@@ -32,9 +34,10 @@ static void put_u32(uint8_t *p, uint32_t v) {
 }
 
 void pastel_checkpoint(uint32_t id, int wait) {
-  uint8_t b[4];
+  uint8_t b[5];
   put_u32(b, id);
-  pastel_mbox_send(PASTEL_MBOX_CHECKPOINT, b, 4);
+  b[4] = wait ? 1 : 0;  // the host only acknowledges a checkpoint that waits
+  pastel_mbox_send(PASTEL_MBOX_CHECKPOINT, b, 5);
   while (wait) {
     pastel_mbox_id_t got;
     uint8_t p[4];
@@ -74,4 +77,41 @@ void pastel_fault(uint32_t cause, uint32_t pc, uint32_t tval) {
   pastel_mbox_send(PASTEL_MBOX_FAULT, b, 12);
   for (;;) {
   }
+}
+
+// --- Errors and checks ----------------------------------------------------------
+
+static void send_error(const char *text) {
+  uint32_t n = 0;
+  while (text[n] && n < 255) n++;
+  pastel_mbox_send(PASTEL_MBOX_ERROR, text, (uint8_t)n);
+}
+
+void pastel_error(const char *fmt, ...) {
+  char text[256];
+  va_list ap;
+  va_start(ap, fmt);
+  pastel_vsnprintf(text, sizeof text, fmt, ap);
+  va_end(ap);
+  send_error(text);
+}
+
+void pastel_check_failed(int fatal, const char *file, int line, const char *expr,
+                         const char *fmt, ...) {
+  const char *base = file;
+  for (const char *p = file; *p; p++)
+    if (*p == '/' || *p == '\\') base = p + 1;
+  char text[256];
+  int n = pastel_snprintf(text, sizeof text, "%s:%d: %s failed: %s", base, line,
+                          fatal ? "ASSERT" : "CHECK", expr);
+  if (*fmt && n + 2 < (int)sizeof text) {
+    text[n] = ':';
+    text[n + 1] = ' ';
+    va_list ap;
+    va_start(ap, fmt);
+    pastel_vsnprintf(text + n + 2, sizeof text - (uint32_t)(n + 2), fmt, ap);
+    va_end(ap);
+  }
+  send_error(text);
+  if (fatal) pastel_finish(1);
 }

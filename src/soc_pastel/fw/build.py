@@ -241,6 +241,7 @@ def build_firmware(
         "-nostdlib",
         "-nostartfiles",
         "-Wall",
+        "-Wno-format-zero-length",  # PASTEL_CHECK(expr) without a message
         "-Wl,--gc-sections",
         "-Wl,--no-warn-rwx-segments",
         "-ffunction-sections",
