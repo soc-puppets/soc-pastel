@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import fcntl
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+#: Log level for errors a test said it expects, like pytest's xfail: a fault
+#: with ``expect_fault``, firmware errors with ``expect_pass=False``, simulator
+#: errors after ``harness.expect_sim_error()``. Shown wherever INFO is, but not
+#: as an error.
+XERROR = logging.INFO + 5
+logging.addLevelName(XERROR, "XERROR")
 
 
 @contextmanager

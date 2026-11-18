@@ -107,3 +107,74 @@ def test_exit_status(platform, status, forced, fails):
     assert found.failed == fails
     if fails:
         assert found.errors[0] == (0, "simulator exited with status 1")
+
+
+# --- Expected simulator errors ----------------------------------------------------------
+
+from soc_pastel.core import PlatformHarness, SimulatorError  # noqa: E402
+from soc_pastel.sim.logcheck import LogFindings, split_expected  # noqa: E402
+
+
+def test_split_expected():
+    errors = [(0, "simulator exited with status 134"), (3, "%Error: boom"), (5, "%Error: other")]
+    split = split_expected(errors, [r"boom", r"never"])
+    assert split.expected == [(3, "%Error: boom"), (0, "simulator exited with status 134")]
+    assert split.unexpected == [(5, "%Error: other")] and split.missing == ["never"]
+    # A failing exit status with no expected error isn't expected.
+    alone = split_expected([(0, "simulator exited with status 1")], [r"boom"])
+    assert alone.unexpected and not alone.expected and alone.missing == ["boom"]
+    assert sorted(split_expected(errors, []).unexpected) == sorted(errors)
+    # The simulator reporting that it stopped follows the error, like the exit status.
+    stop = [(3, "%Error: boom"), (4, "%Error: tb.sv:88: Verilog $stop")]
+    assert split_expected(stop, ["boom"], [r"Verilog \$stop"]).unexpected == []
+    assert split_expected(stop[1:], ["boom"], [r"Verilog \$stop"]).unexpected == stop[1:]
+
+
+class FakeItem:
+    def __init__(self, harness):
+        self.funcargs = {"harness": harness}
+        self.user_properties = []
+
+
+def fake_harness(errors, expected=(), started=True):
+    class Platform:
+        _image = None
+
+        def stop(self):
+            pass
+
+        def check_run(self):
+            return LogFindings(errors=list(errors), path=Path("sim.log"))
+
+    h = PlatformHarness.__new__(PlatformHarness)
+    h._platform, h._state, h._started, h._open = Platform(), "open", started, []
+    h.expected_sim_errors = list(expected)
+    return h
+
+
+def finish(harness, test_failed=False):
+    from soc_pastel.pytest_plugin import _finish_simulation
+
+    _finish_simulation(FakeItem(harness), test_failed=test_failed)
+
+
+def test_expected_errors_pass_and_are_logged_as_xerror(caplog):
+    caplog.set_level("INFO", logger="soc_pastel")
+    finish(fake_harness([(4, "%Error: boom"), (0, "simulator exited with status 134")], ["boom"]))
+    lines = [(r.levelname, r.getMessage()) for r in caplog.records]
+    assert ("XERROR", "sim.log:4: %Error: boom (expected)") in lines
+    assert ("XERROR", "simulator exited with status 134 (expected)") in lines
+
+
+def test_unexpected_or_missing_errors_fail():
+    with pytest.raises(SimulatorError, match="other"):
+        finish(fake_harness([(4, "%Error: boom"), (6, "%Error: other")], ["boom"]))
+    with pytest.raises(SimulatorError, match="expected a simulator error matching 'boom'"):
+        finish(fake_harness([], ["boom"]))
+    with pytest.raises(SimulatorError, match="never started"):
+        finish(fake_harness([], ["boom"], started=False))
+
+
+def test_a_test_that_already_failed_keeps_its_own_failure(caplog):
+    finish(fake_harness([(4, "%Error: boom")]), test_failed=True)  # doesn't raise
+    assert any("boom" in r.getMessage() and r.levelname == "ERROR" for r in caplog.records)

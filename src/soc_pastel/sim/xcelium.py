@@ -189,6 +189,8 @@ class XceliumPlatform(SimulatorPlatform):
     RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
         LogRules(errors=(XRUN_ERROR.pattern,), warnings=(XRUN_WARNING.pattern,))
     )
+    #: Best guess: xrun's summary of a run with errors.
+    STOP_MESSAGES: ClassVar[tuple[str, ...]] = (r"\*E,.*(errors|stopped)",)
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102

@@ -28,7 +28,9 @@ from .core.device import Device
 from .core.errors import ConfigurationError, SimulatorError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
+from .core.util import XERROR
 from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter, turn_on_live_logging
+from .sim.logcheck import LogFindings, split_expected
 
 try:  # pytest internals; see pytest_runtest_setup below
     from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
@@ -96,12 +98,21 @@ def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
     """Stop the test's platform and check how the simulation went.
 
     Errors in the simulator's log (or a failing exit status) fail a test that
-    otherwise passed. If the test already failed, they're only logged, so the
-    original failure isn't hidden.
+    otherwise passed, unless the test expected them
+    (:meth:`~soc_pastel.core.harness.PlatformHarness.expect_sim_error`). If the
+    test already failed, they're only logged, so its own failure isn't hidden.
     """
     __tracebackhide__ = True
     harness = getattr(item, "funcargs", {}).get("harness")
-    if not isinstance(harness, PlatformHarness) or not harness.started:
+    if not isinstance(harness, PlatformHarness):
+        return
+    expected = harness.expected_sim_errors
+    if not harness.started:
+        if expected and not test_failed:
+            raise SimulatorError(
+                f"expected a simulator error matching {expected[0]!r}, "
+                "but the simulation never started"
+            )
         return
     try:
         harness.close()
@@ -119,8 +130,20 @@ def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
     findings = check_run()
     if findings.warnings:
         log.warning("simulation log %s", findings.describe(max_lines=5))
-    if findings.failed:
-        message = f"simulation reported errors:\n{findings.describe()}"
+    split = split_expected(findings.errors, expected, getattr(platform, "STOP_MESSAGES", ()))
+    name = findings.path.name if findings.path else "log"
+    for number, line in split.expected:
+        where = f"{name}:{number}: " if number else ""
+        log.log(XERROR, "%s%s (expected)", where, line.strip())
+    problems = []
+    if split.unexpected or findings.missing:
+        unexpected = LogFindings(split.unexpected, [], findings.missing, findings.path)
+        problems.append(f"simulation reported errors:\n{unexpected.describe()}")
+    problems += [
+        f"expected a simulator error matching {p!r}, but none appeared" for p in split.missing
+    ]
+    if problems:
+        message = "\n".join(problems)
         if test_failed:
             log.error(message)
         else:

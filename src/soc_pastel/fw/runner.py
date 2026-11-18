@@ -20,11 +20,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("soc_pastel.firmware")
 
-#: Log level for errors a test said it expects, like pytest's xfail: a fault
-#: with ``expect_fault``, or firmware errors with ``expect_pass=False``. Shown
-#: wherever INFO is, but not as an error.
-XERROR = logging.INFO + 5
-logging.addLevelName(XERROR, "XERROR")
+from soc_pastel.core.util import XERROR  # noqa: E402 - re-exported
 
 MAILBOX_VERSION = 2
 TEXT_CHANNEL, MAILBOX_CHANNEL = 0, 1

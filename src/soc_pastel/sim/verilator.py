@@ -105,6 +105,8 @@ class VerilatorPlatform(SimulatorPlatform):
     RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES.merged(
         LogRules(errors=(r"%(Error|Fatal)",), warnings=(r"%Warning",))
     )
+    #: Verilator stops at the first $error (+verilator+error+limit), and says so.
+    STOP_MESSAGES: ClassVar[tuple[str, ...]] = (r"%Error: .*: Verilog \$stop",)
 
     @classmethod
     def add_options(cls, parser: pytest.Parser) -> None:  # noqa: D102

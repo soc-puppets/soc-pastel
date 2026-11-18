@@ -132,7 +132,8 @@ A test passes only if all of these hold:
 - **The model builds cleanly:** no errors in its build log.
 - **The simulation is clean:** once the test has finished, ``sim.log`` has no
   error messages (``$error``, ``$fatal``, assertion failures, ``UVM_ERROR``,
-  ...) and the simulator exited successfully. See :doc:`simulators`.
+  ...) and the simulator exited successfully, apart from errors the test
+  expected with ``harness.expect_sim_error(pattern)``. See :doc:`simulators`.
 
 Doing things at a known point: checkpoints
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

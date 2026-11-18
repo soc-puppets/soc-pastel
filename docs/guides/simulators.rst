@@ -94,6 +94,21 @@ Every run also checks UVM and OVL messages and PASTEL's own (``pastel: cannot
 A device pack adds its own rules, or waives harmless messages, in its
 ``sim_sources`` hook; see :ref:`adding log rules <log-rules>`.
 
+A test that *expects* a simulator error says so, as it would for a firmware
+fault:
+
+.. code-block:: python
+
+   def test_overflow_is_flagged(harness):
+       harness.expect_sim_error(r"FIFO overflow")
+       ...  # make the design overflow its FIFO
+
+Errors matching the pattern are then logged as ``XERROR``, an expected error,
+instead of failing the test. So is the simulator's report that it stopped
+(Verilator stops at the first ``$error``), and the failing exit status that
+follows. The test fails if no error matches, or if any other error appears.
+``packages/veerwolf/tests/test_sim_log_errors.py`` has worked examples.
+
 Verilator
 ---------
 

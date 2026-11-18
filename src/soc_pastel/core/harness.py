@@ -59,6 +59,8 @@ class PlatformHarness:
         self._platform = platform
         self._state = "new"  # -> "opening" -> "open" -> "closed"
         self._started = False  # platform.start() has been called
+        #: Patterns of simulator errors the test expects (see :meth:`expect_sim_error`).
+        self.expected_sim_errors: list[str] = []
         self._interfaces: dict[str, Interface] = {
             name: cls(name, cfg, self) for name, (cls, cfg) in interfaces.items()
         }
@@ -67,6 +69,16 @@ class PlatformHarness:
         self._open: list[Interface] = []
         if not isinstance(self._interfaces.get(ON_CHIP_DEBUG), OnChipDebug):
             raise CapabilityError(f"harness needs an {ON_CHIP_DEBUG!r} interface")
+
+    def expect_sim_error(self, pattern: str) -> None:
+        """Say the simulation should report an error matching ``pattern`` (a regex).
+
+        When the test ends, errors in the simulator's log that match are logged
+        as expected (XERROR) instead of failing the test, and so is a failing
+        exit status that follows them. The test fails if no error matches, or
+        if any other error appears. Call it more than once to expect several.
+        """
+        self.expected_sim_errors.append(pattern)
 
     @property
     def started(self) -> bool:

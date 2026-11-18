@@ -125,6 +125,64 @@ class LogFindings:
         return "\n".join(out)
 
 
+#: The text of the error :meth:`SimulatorPlatform.check_run
+#: <soc_pastel.sim.simulator.SimulatorPlatform.check_run>` adds (line 0) for a
+#: failing exit status.
+EXIT_STATUS_ERROR = "simulator exited with status"
+
+
+@dataclass
+class Expectations:
+    """A run's errors, split by what the test said to expect.
+
+    Attributes:
+        expected: Errors matching an expected pattern, and, if any expected
+            error appeared, its consequences: the simulator's report that it
+            stopped (Verilator stops at the first ``$error``) and a failing
+            exit status.
+        unexpected: Every other error.
+        missing: Expected patterns that matched no error.
+    """
+
+    expected: list[tuple[int, str]] = field(default_factory=list)
+    unexpected: list[tuple[int, str]] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+
+
+def split_expected(
+    errors: list[tuple[int, str]],
+    patterns: Iterable[str],
+    consequences: Iterable[str] = (),
+) -> Expectations:
+    """Split a run's errors into expected and unexpected, given expected patterns.
+
+    ``consequences`` are patterns for errors that only follow from another
+    error (e.g. the simulator reporting that it stopped). They count as
+    expected if any expected error appeared, and as errors otherwise, as
+    does a failing exit status.
+    """
+    patterns = list(patterns)
+    regexes = {p: re.compile(p) for p in patterns}
+    follow_on = [re.compile(p) for p in consequences]
+    seen: set[str] = set()
+    result = Expectations()
+    exit_status = []
+    for number, line in errors:
+        if (number == 0 and line.startswith(EXIT_STATUS_ERROR)) or any(
+            rx.search(line) for rx in follow_on
+        ):
+            exit_status.append((number, line))
+            continue
+        matched = [p for p, rx in regexes.items() if rx.search(line)]
+        seen.update(matched)
+        (result.expected if matched else result.unexpected).append((number, line))
+    target = result.expected if result.expected else result.unexpected
+    target += exit_status
+    target.sort(key=lambda e: (e[0] == 0, e[0]))  # log order; the exit status last
+    result.missing = [p for p in patterns if p not in seen]
+    return result
+
+
 #: Run-log rules every simulator shares: UVM and OVL reports, and PASTEL's own
 #: messages from inside the simulator.
 COMMON_RUN_RULES = LogRules(

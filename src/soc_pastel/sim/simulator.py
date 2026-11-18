@@ -37,7 +37,14 @@ from soc_pastel.core.util import file_lock
 
 from .handlers import Backdoor, BackdoorMemory, Pipe, PlatformControl
 from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
-from .logcheck import COMMAND_ECHO, COMMON_RUN_RULES, COMPILER_RULES, LogFindings, LogRules
+from .logcheck import (
+    COMMAND_ECHO,
+    COMMON_RUN_RULES,
+    COMPILER_RULES,
+    EXIT_STATUS_ERROR,
+    LogFindings,
+    LogRules,
+)
 from .session import Listener, SocketEndpointSession, accept_session
 from .sources import SimSources, load_sim_sources
 
@@ -327,6 +334,9 @@ class SimulatorPlatform(SimulationPlatform):
     #: What counts as an error or a warning in ``sim.log`` (see
     #: :mod:`soc_pastel.sim.logcheck`). Subclasses add their simulator's.
     RUN_RULES: ClassVar[LogRules] = COMMON_RUN_RULES
+    #: Errors in ``sim.log`` that only follow from another error: the simulator
+    #: reporting it stopped. Expected along with an expected error.
+    STOP_MESSAGES: ClassVar[tuple[str, ...]] = ()
 
     platform_handlers: ClassVar[Mapping[str, type[EndpointHandler]]] = {
         PlatformControl.type_name: PlatformControl,
@@ -388,7 +398,7 @@ class SimulatorPlatform(SimulationPlatform):
             return LogFindings()
         findings = self.run_rules.check(self.log_path)
         if self.exit_status not in (None, 0) and not self._forced:
-            findings.errors.insert(0, (0, f"simulator exited with status {self.exit_status}"))
+            findings.errors.insert(0, (0, f"{EXIT_STATUS_ERROR} {self.exit_status}"))
         return findings
 
     def capabilities(self) -> frozenset[str]:
