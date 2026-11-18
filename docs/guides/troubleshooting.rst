@@ -23,9 +23,9 @@ Where the logs are
    * - Firmware build
      - ``fw/<name>-<location>/build.log`` in the test's run directory``
 
-When a test fails, PASTEL prints its run directory (``/tmp/pytest-of-$USER/...``)
-and the logs in it straight away, and lists the run directories of every
-failing test at the end.
+A failing test's report has a "PASTEL: where to look" section with its run
+directory (``/tmp/pytest-of-$USER/...``) and the logs in it, and the end of the
+run lists the run directories of every failing test.
 
 Installing
 ----------

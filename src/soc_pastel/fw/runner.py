@@ -20,6 +20,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("soc_pastel.firmware")
 
+#: Log level for errors a test said it expects, like pytest's xfail: a fault
+#: with ``expect_fault``, or firmware errors with ``expect_pass=False``. Shown
+#: wherever INFO is, but not as an error.
+XERROR = logging.INFO + 5
+logging.addLevelName(XERROR, "XERROR")
+
 MAILBOX_VERSION = 2
 TEXT_CHANNEL, MAILBOX_CHANNEL = 0, 1
 
@@ -48,6 +54,8 @@ class FirmwareResult:
         errors: Errors the firmware reported (``PASTEL_ERROR``, a failed
             ``PASTEL_CHECK`` or ``PASTEL_ASSERT``), in order.
         output: Everything the firmware printed.
+        fault: The fault, if the firmware took one and the test expected it
+            (``expect_fault``); otherwise a fault is raised.
         checkpoints: Checkpoint ids in the order reported.
         data: Payloads of ``pastel_send`` calls, in order.
     """
@@ -57,15 +65,18 @@ class FirmwareResult:
     output: str = ""
     checkpoints: list[int] = field(default_factory=list)
     data: list[bytes] = field(default_factory=list)
+    fault: FirmwareFault | None = None
 
     @property
     def passed(self) -> bool:
-        """True if ``test_main`` returned 0 and the firmware reported no errors."""
-        return self.result == 0 and not self.errors
+        """True if ``test_main`` returned 0, with no errors reported and no fault."""
+        return self.result == 0 and not self.errors and self.fault is None
 
     def describe(self, output_lines: int = 20) -> str:
         """Why the firmware failed (or that it passed), with the end of its output."""
-        out = [f"test_main returned {self.result}"] if self.result else []
+        out = [str(self.fault)] if self.fault else []
+        if self.result and not self.fault:
+            out.append(f"test_main returned {self.result}")
         if self.errors:
             out.append(f"{len(self.errors)} error{'s' if len(self.errors) != 1 else ''}:")
             out += [f"  {e}" for e in self.errors]
@@ -85,8 +96,8 @@ class FirmwareFailed(TargetError):
         result: The :class:`FirmwareResult`.
     """
 
-    def __init__(self, result: FirmwareResult) -> None:
-        super().__init__(f"firmware failed: {result.describe()}")
+    def __init__(self, result: FirmwareResult, why: str = "firmware failed") -> None:
+        super().__init__(f"{why}: {result.describe()}")
         self.result = result
 
 
@@ -105,6 +116,8 @@ def run_firmware(
     timeout_s: float = 300.0,
     on_checkpoint: Callable[[int], None] | None = None,
     poll_s: float = 0.005,
+    expect_fault: bool = False,
+    expect_errors: bool = False,
 ) -> FirmwareResult:
     """Reset the target, load and run ``elf``, and wait for it to finish.
 
@@ -113,8 +126,13 @@ def run_firmware(
     calls to ``pastel_waves`` are passed to :meth:`Platform.set_waves
     <soc_pastel.core.platform.Platform.set_waves>`.
 
+    With ``expect_fault``, a fault ends the run and is returned in
+    :attr:`FirmwareResult.fault` instead of raised. With ``expect_errors``,
+    errors the firmware reports are logged at :data:`XERROR` rather than
+    ERROR. Either way the result says what happened.
+
     Raises:
-        FirmwareFault: The firmware took an unexpected exception.
+        FirmwareFault: The firmware took an exception, and ``expect_fault`` wasn't set.
         PastelTimeout: It did not finish within ``timeout_s`` wall-clock seconds.
     """
     ocd = harness.ocd
@@ -164,7 +182,8 @@ def run_firmware(
             elif mid == Mbox.ERROR:
                 message = payload.decode(errors="replace")
                 result.errors.append(message)
-                log.error("firmware error: %s", message)
+                level = XERROR if expect_errors else logging.ERROR
+                log.log(level, "firmware error: %s", message)
             elif mid == Mbox.WAVES:
                 on = harness.platform.set_waves(payload[:1] != b"\x00")
                 send(Mbox.HOST_WAVES, bytes([on]))
@@ -176,6 +195,10 @@ def run_firmware(
                 return result
             elif mid == Mbox.FAULT:
                 fault = FirmwareFault(*struct.unpack("<III", payload), result.output)
+                if expect_fault:
+                    log.log(XERROR, "%s (expected)", fault)
+                    result.fault = fault
+                    return result
                 log.error("%s", fault)
                 raise fault
         if time.monotonic() > deadline:

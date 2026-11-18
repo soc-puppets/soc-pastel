@@ -50,6 +50,13 @@ def test_fault_is_reported(firmware):
     assert e.value.cause == 2  # illegal instruction
 
 
+def test_expected_fault_is_returned(firmware):
+    result = firmware.run("fw/fault.c", expect_fault=True)
+    assert result.fault is not None and result.fault.cause == 2 and not result.passed
+    with pytest.raises(FirmwareFailed, match="expected a fault"):
+        firmware.run("fw/hello.c", expect_fault=True)
+
+
 def test_host_and_firmware_share_memory(firmware):
     elf = firmware.build("fw/memory.c")
     addr = elf_symbol(elf, "pastel_shared")

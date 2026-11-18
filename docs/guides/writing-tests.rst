@@ -98,9 +98,24 @@ instead:
        result = firmware.run("fw/bad_config.c", expect_pass=False)
        assert result.result == 3
 
-An unexpected exception in the firmware raises
+A firmware's errors are then logged as ``XERROR``, an *expected* error, rather
+than ``ERROR``, like pytest's ``xfail``.
+
+An exception in the firmware raises
 :py:class:`~soc_pastel.fw.runner.FirmwareFault`, with ``cause``, ``pc`` and
-``tval``. Not finishing within ``timeout_s`` (default 300 s, wall clock) raises
+``tval``. A test that expects one passes ``expect_fault=True``. The fault is
+then logged as ``XERROR`` and returned in ``result.fault``, and the test fails
+if the firmware finishes without one:
+
+.. code-block:: python
+
+   def test_illegal_instruction_traps(firmware):
+       result = firmware.run("fw/illegal.c", expect_fault=True)
+       assert result.fault.cause == 2
+
+PASTEL only knows an error is expected if the test says so in
+``firmware.run()``. Errors caught with ``pytest.raises`` are still logged as
+``ERROR``. Not finishing within ``timeout_s`` (default 300 s, wall clock) raises
 :py:class:`~soc_pastel.core.errors.PastelTimeout`.
 
 How a test passes or fails
@@ -382,27 +397,35 @@ temporary directory, its *run directory*.
 What a run shows
 ~~~~~~~~~~~~~~~~
 
-Simulations are slow, so PASTEL reports as it goes, one line per step, tagged
-with the test:
+PASTEL logs each step of a test, and turns on pytest's live logging, so you
+see them as they happen. With ``-v``, each test's lines sit under its name,
+with its result after them:
 
 .. code-block:: text
 
-   pastel [test_hello] simulator started; run directory /tmp/pytest-of-me/pytest-7/test_hello0
-   pastel [test_hello] simulator connected after 0.4 s
-   pastel [test_hello] OpenOCD ready (riscv.cpu) after 1.2 s
-   pastel [test_hello] loaded hello-ram.elf (1776 bytes via backdoor) in 0.0 s
-   pastel [test_hello] running hello-ram.elf from 0x0
-   pastel [test_hello] fw: Hello from veerwolf (sim)
-   pastel [test_hello] checkpoint 1
-   pastel [test_hello] firmware finished: test_main returned 0
+   src/soc_pastel/conformance/test_firmware.py::test_hello
+   -------------------------------- live log call ---------------------------------
+   INFO    built hello-ram.elf in 0.3 s
+   INFO    simulator started; run directory /tmp/pytest-of-me/pytest-7/test_hello0
+   INFO    simulator connected after 0.4 s
+   INFO    OpenOCD ready (riscv.cpu) after 1.2 s
+   INFO    loaded hello-ram.elf (1832 bytes via backdoor) in 0.0 s
+   INFO    running hello-ram.elf from 0x0
+   INFO    fw: Hello from veerwolf (sim)
+   INFO    checkpoint 1 (waiting)
+   INFO    firmware finished: test_main returned 0
+   PASSED                                                                   [ 50%]
 
-Model builds, firmware builds, warnings and errors appear the same way. The
-moment a test fails, PASTEL prints a *failure block* while the rest of the run
-carries on. It holds the error, the test's run directory and the logs in it,
-and the model's build log. pytest repeats the error in its usual summary at the
-end, and PASTEL adds a list of the failing tests' run directories, and each
-test's waveform if ``--waves`` was given.
+Model builds, warnings and errors appear the same way. This is pytest's own
+live logging. If your configuration already sets it (``log_cli``,
+``--log-cli-level``, ``log_cli_format``), PASTEL leaves your settings alone,
+and ``--pastel-quiet`` stops PASTEL turning it on at all.
 
-``--pastel-quiet`` drops the progress lines and keeps failure blocks. Under
-pytest-xdist (``-n``), workers can't print progress lines, but failure blocks
-and the summary still appear.
+A failing test's report gets a **PASTEL: where to look** section: the test's
+run directory, the logs in it, and the model's build log. The end of the run
+lists the run directories of every failing test, and each test's waveform if
+``--waves`` was given. To see failures as they happen rather than at the end,
+add the ``pytest-instafail`` plugin and pass ``--instafail``.
+
+Under pytest-xdist (``-n``), workers can't show live logs, but the failure
+sections and the summary still appear.

@@ -44,36 +44,48 @@ def run(tmp_path, *args):
     return result.stdout + result.stderr
 
 
-def test_progress_lines_are_tagged_with_the_test(tmp_path):
-    out = run(tmp_path)
-    assert "pastel [test_passes] simulator started; run directory /somewhere" in out
-    assert "pastel [test_fails] a warning\n    with two lines" in out
+def test_progress_lines_are_shown_live_by_default(tmp_path):
+    out = run(tmp_path, "-v")
+    block = out[out.index("test_demo.py::test_passes") :]
+    assert "live log call" in block
+    assert "INFO    simulator started; run directory /somewhere" in block
+    assert "WARNING a warning" in out
 
 
-def test_failure_block_points_at_the_run_directory_and_logs(tmp_path):
+def test_the_users_own_live_logging_settings_win(tmp_path):
+    out = run(tmp_path, "-v", "--log-cli-level=WARNING")
+    assert "simulator started" not in out.split("= FAILURES =")[0]  # INFO not shown live
+    assert "WARNING a warning" in out
+    out = run(tmp_path, "-v", "-o", "log_cli_format=<<%(message)s>>")
+    assert "<<simulator started; run directory /somewhere>>" in out
+
+
+def test_failures_say_where_to_look(tmp_path):
     out = run(tmp_path)
-    block = out[out.index("test_demo.py::test_fails failed") : out.index("= FAILURES =")]
-    assert "the reason" in block
-    assert "run directory: " in block
-    assert "  sim.log" in block and "  fw/hello-ram/build.log" in block
-    assert "model build log: /models/tb-123/build.log" in block
-    assert "test_not_pastel failed" not in out  # plain pytest failures are left to pytest
+    failures = out[out.index("= FAILURES =") :]
+    fails = failures[failures.index("_ test_fails _") : failures.index("_ test_not_pastel _")]
+    assert "the reason" in fails
+    section = fails[fails.index("PASTEL: where to look") :]
+    assert "run directory: " in section
+    assert "  sim.log" in section and "  fw/hello-ram/build.log" in section
+    assert "model build log: /models/tb-123/build.log" in section
+    plain = failures[failures.index("_ test_not_pastel _") :]
+    assert "PASTEL: where to look" not in plain.split("\n=")[0]  # plain pytest tests left alone
     summary = out[out.index("run directories of failing tests") :]
-    assert (
-        "test_demo.py::test_fails: " in summary and "test_not_pastel" not in summary.split("\n=")[0]
-    )
+    assert "test_demo.py::test_fails: " in summary
+    assert "test_not_pastel" not in summary.split("\n=")[0]
 
 
-def test_quiet_keeps_failures_but_drops_progress(tmp_path):
-    out = run(tmp_path, "--pastel-quiet")
-    assert "pastel [" not in out
-    assert "test_demo.py::test_fails failed" in out and "run directory: " in out
+def test_quiet_leaves_pytests_defaults_alone(tmp_path):
+    out = run(tmp_path, "-v", "--pastel-quiet")
+    assert "live log call" not in out
+    assert "PASTEL: where to look" in out  # failures still say where to look
 
 
-def test_failure_blocks_under_xdist(tmp_path):
+def test_failures_say_where_to_look_under_xdist(tmp_path):
     pytest.importorskip("xdist")
     out = run(tmp_path, "-n", "2")
-    assert "test_demo.py::test_fails failed" in out and "  sim.log" in out
+    assert "PASTEL: where to look" in out and "  sim.log" in out
     assert "run directories of failing tests" in out
 
 
@@ -113,6 +125,6 @@ def run_in_terminal(tmp_path, *args):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX pseudo-terminal")
 def test_progress_and_failures_reach_a_real_terminal(tmp_path):
-    out = run_in_terminal(tmp_path)
-    assert "pastel [test_passes] simulator started; run directory /somewhere" in out
-    assert "test_demo.py::test_fails failed" in out and "  sim.log" in out
+    out = run_in_terminal(tmp_path, "-v")
+    assert "INFO    simulator started; run directory /somewhere" in out
+    assert "PASTEL: where to look" in out and "  sim.log" in out

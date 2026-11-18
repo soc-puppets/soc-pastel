@@ -28,7 +28,7 @@ from .core.device import Device
 from .core.errors import ConfigurationError, SimulatorError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
-from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter
+from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter, turn_on_live_logging
 
 try:  # pytest internals; see pytest_runtest_setup below
     from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
@@ -49,7 +49,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--pastel-quiet",
         action="store_true",
-        help="Don't print PASTEL's progress lines while tests run (failures are still shown).",
+        help="Don't turn on pytest's live logging (PASTEL's progress lines) by default.",
     )
     group.addoption(
         "--waves",
@@ -158,7 +158,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register PASTEL's markers and the waveform summary."""
-    config.pluginmanager.register(Reporter(config), "soc-pastel-reporter")
+    config.pluginmanager.register(Reporter(), "soc-pastel-reporter")
+    turn_on_live_logging(config)
     config.addinivalue_line(
         "markers",
         "requires(*capabilities): skip unless the harness offers every capability "
@@ -301,6 +302,7 @@ class Firmware:
         stack_size: int | None = None,
         timeout_s: float = 300.0,
         expect_pass: bool = True,
+        expect_fault: bool = False,
         **kwargs: Any,
     ):
         """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
@@ -311,17 +313,32 @@ class Firmware:
 
         Fails the test with :class:`~soc_pastel.fw.runner.FirmwareFailed` if
         the firmware returns non-zero or reports errors, unless
-        ``expect_pass=False``, for tests that check a failure.
+        ``expect_pass=False``, for tests that check a failure; its errors are
+        then logged as expected (XERROR) rather than as errors.
+
+        With ``expect_fault=True`` the firmware is expected to take an
+        exception: the fault is logged as expected and returned in
+        ``result.fault``, and the test fails if the firmware finishes instead.
         """
         __tracebackhide__ = True
         from .fw.runner import run_firmware
 
         build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
         elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
-        result = run_firmware(self.harness, elf, timeout_s=timeout_s, **kwargs)
-        if expect_pass and not result.passed:
-            from .fw.runner import FirmwareFailed
+        result = run_firmware(
+            self.harness,
+            elf,
+            timeout_s=timeout_s,
+            expect_fault=expect_fault,
+            expect_errors=not expect_pass,
+            **kwargs,
+        )
+        from .fw.runner import FirmwareFailed
 
+        if expect_fault:
+            if result.fault is None:
+                raise FirmwareFailed(result, "expected a fault, but the firmware finished")
+        elif expect_pass and not result.passed:
             raise FirmwareFailed(result)
         return result
 

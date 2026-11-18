@@ -85,3 +85,6 @@ known-first-party = ["soc_pastel", "soc_pastel_veerwolf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Each test's name, then PASTEL's progress lines (pytest's live logging,
+# which PASTEL turns on), then its result.
+addopts = "-v"
