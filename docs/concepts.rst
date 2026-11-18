@@ -86,6 +86,13 @@ bind an ``on_chip_debug`` interface, and the harness opens it before any other.
 Simulation
 ----------
 
+.. figure:: diagrams/pastel-overview.svg
+   :alt: The components of a PASTEL simulation run and how they connect.
+   :width: 100%
+
+   The parts of a simulation run, what each is written in, and how they
+   talk to each other.
+
 A simulation runs as its own process. On the first clock edge the testbench's
 ``pastel_server`` dials back to the test process and announces its *endpoints*:
 one per VIP, plus the platform's own (backdoor memories and platform
