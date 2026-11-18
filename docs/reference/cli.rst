@@ -90,7 +90,11 @@ FPGA platform (``--platform=fpga``) and debug probes:
    * - ``--jlink-serial=<sn>``
      - The USB J-Link to use, by serial number (``jlink`` driver).
    * - ``--jlink-ip=<addr>``
-     - A J-Link over IP, or a SEGGER tunnel (``tunnel:<name>``).
+     - A J-Link over IP, or a SEGGER tunnel (``tunnel:<name>``; ``commander`` only).
+   * - ``--jlink-backend=<name>``
+     - How the ``jlink`` driver talks to the probe: ``commander`` (J-Link
+       Commander) or ``pylink`` (SEGGER's library). Overrides the binding's
+       ``backend``.
 
 Markers
 -------
@@ -144,6 +148,9 @@ Environment variables
      - OpenOCD executable (default ``openocd``)
    * - ``PASTEL_JLINKEXE``
      - J-Link Commander, for the ``jlink`` driver (default ``JLinkExe``)
+   * - ``PASTEL_JLINK_LIBRARY``
+     - SEGGER's J-Link library, for the ``jlink`` driver's ``pylink`` backend
+       (default: wherever pylink finds it)
    * - ``PASTEL_VEERWOLF_WORKSPACE``
      - Existing FuseSoC workspace for the VeeRwolf pack
 

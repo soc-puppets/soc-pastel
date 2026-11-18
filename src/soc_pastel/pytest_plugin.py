@@ -93,6 +93,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     probe.addoption(
         "--jlink-serial", metavar="SN", help="USB J-Link to use, by serial number; jlink driver."
     )
+    probe.addoption(
+        "--jlink-backend",
+        choices=("commander", "pylink"),
+        help="How the jlink driver talks to the probe: J-Link Commander (JLinkExe) or "
+        "SEGGER's library through pylink. Overrides the binding's 'backend'.",
+    )
     for name in registry.platform_names():
         try:
             registry.platform(name).add_options(parser)

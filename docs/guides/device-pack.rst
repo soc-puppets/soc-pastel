@@ -552,11 +552,19 @@ as VeeRwolf's FPGA variant does, or a SEGGER J-Link:
        "fpga": {"impl": "jlink", "device": "RISC-V", "interface": "JTAG", "speed": 4000},
    }),
 
-The ``jlink`` driver runs SEGGER's J-Link Commander (``JLinkExe``), so SEGGER's
-J-Link software must be installed, plus ``pip install "soc-pastel[jlink]"``.
-Pick a probe with ``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP or a
-SEGGER tunnel). Its output goes to ``jlink.log`` in the test's run directory.
-See :mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every option.
+The ``jlink`` driver talks to the probe in one of two ways, its *backend*:
+
+- ``commander`` (the default) runs SEGGER's J-Link Commander (``JLinkExe``)
+  and parses its replies.
+- ``pylink`` calls SEGGER's J-Link library directly, through pylink.
+
+Both need SEGGER's J-Link software, plus ``pip install "soc-pastel[jlink]"``.
+They behave the same, so a binding can set ``"backend": "pylink"`` or leave the
+default, and ``--jlink-backend`` picks the other at run time. Pick a probe with
+``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP, or a SEGGER tunnel with
+``commander``). The probe software's output goes to ``jlink.log`` in the test's
+run directory. See :mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every
+option.
 
 On hardware, firmware loads and RTT is read through the probe, so a code
 location's ``rtt`` region must be readable while the CPU runs. Tests that need

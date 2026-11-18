@@ -1,9 +1,18 @@
-"""On-chip debug through a SEGGER J-Link, by driving J-Link Commander (``JLinkExe``).
+"""On-chip debug through a SEGGER J-Link.
 
-Ported from APE's ``jlink_exe_wrapper``: it runs ``JLinkExe`` under
-:mod:`pexpect`, sends Commander commands and parses the replies. It needs
-SEGGER's J-Link software (``JLinkExe``) and ``pexpect``
-(``pip install "soc-pastel[jlink]"``).
+One driver, ``jlink``, with two ways of talking to the probe (*backends*):
+
+- ``commander`` (the default): drives J-Link Commander (``JLinkExe``) under
+  :mod:`pexpect`, sending Commander commands and parsing the replies. Ported
+  from APE's ``jlink_exe_wrapper``.
+- ``pylink``: calls SEGGER's J-Link library (``libjlinkarm``) directly through
+  `pylink <https://pylink.readthedocs.io>`_ (``pylink-square``). No text
+  parsing, and faster for many small accesses.
+
+Both need SEGGER's J-Link software installed, and
+``pip install "soc-pastel[jlink]"`` (which brings ``pexpect`` and
+``pylink-square``). Everything else (the halt checks, memory access, locking,
+the voltage check, ``jlink.log``) is shared, so the two behave the same.
 
 Bind it for a hardware platform::
 
@@ -14,32 +23,44 @@ Bind it for a hardware platform::
 Binding config keys:
 
 - ``impl``: ``"jlink"``.
-- ``device``: the J-Link device name (``device`` command), e.g. ``"RISC-V"``.
+- ``backend``: ``"commander"`` (default) or ``"pylink"``. ``--jlink-backend``
+  overrides it at run time.
+- ``device``: the J-Link device name, e.g. ``"RISC-V"``.
 - ``interface``: ``"JTAG"`` (default) or ``"SWD"``.
 - ``speed``: interface speed in kHz (default 4000).
-- ``ip``: connect to a J-Link over IP or a SEGGER tunnel (``-IP``), e.g.
-  ``"tunnel:<name>"``. ``serial``: pick a USB J-Link by serial number. Neither:
-  the only USB J-Link. Both can be given at run time with ``--jlink-ip`` and
-  ``--jlink-serial``.
-- ``jtag_conf``: ``JTAGConf`` arguments (default ``"-1 -1"``: auto-detect the chain).
+- ``ip``: connect to a J-Link over IP, e.g. ``"192.168.1.20"``, or (commander
+  only) a SEGGER tunnel, ``"tunnel:<name>"``. ``serial``: pick a USB J-Link by
+  serial number. Neither: the only USB J-Link. Both can be given at run time
+  with ``--jlink-ip`` and ``--jlink-serial``.
+- ``jtag_conf``: the JTAG chain position, ``"<IRPre> <DRPre>"`` (default
+  ``"-1 -1"``: auto-detect).
 - ``reset_pin``: also pulse the nRESET pin when resetting (default False).
 - ``min_vtref``: fail to connect if the target's reference voltage is lower
   (default 1.0 V; ``0`` skips the check).
-- ``executable``: J-Link Commander (default ``$PASTEL_JLINKEXE`` or ``JLinkExe``).
-- ``timeout_s``: how long one command may take (default 30).
+- ``timeout_s``: how long one Commander command, or opening the probe and
+  connecting through pylink, may take (default 30).
+- ``executable`` (commander): J-Link Commander (default ``$PASTEL_JLINKEXE``
+  or ``JLinkExe``).
+- ``library`` (pylink): SEGGER's J-Link library (default
+  ``$PASTEL_JLINK_LIBRARY``, else wherever pylink finds it).
+
+A binding may set both ``executable`` and ``library``, so either backend can
+be chosen at run time; the one not in use is ignored.
 """
 
 from __future__ import annotations
 
+import abc
 import logging
 import os
 import re
 import struct
 import tempfile
 import threading
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from soc_pastel.core.errors import ConfigurationError, PastelTimeout, TargetError
 from soc_pastel.core.memory import MemoryInterface, WordMemory
@@ -51,15 +72,122 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _KEYS = {
-    "impl", "device", "interface", "speed", "ip", "serial", "jtag_conf", "reset_pin",
-    "min_vtref", "executable", "timeout_s",
+    "impl", "backend", "device", "interface", "speed", "ip", "serial", "jtag_conf",
+    "reset_pin", "min_vtref", "timeout_s", "executable", "library",
 }  # fmt: skip
 #: Commander's error messages, e.g. ``****** Error: ...``, ``ERROR: ...`` or
 #: ``Connecting to J-Link via USB...FAILED: Cannot connect to J-Link.``
 _ERROR = re.compile(r"^\s*(\*+\s*Error\b|ERROR\b|Could not)|\bFAILED:", re.I | re.M)
+T = TypeVar("T")
 
 
-class JLinkCommander:
+def _no_probe(ip: str | None, serial: str | None, detail: str) -> TargetError:
+    where = f"at {ip}" if ip else f"with serial {serial}" if serial else "on USB"
+    return TargetError(
+        f"can't reach a J-Link {where} (pick one with --jlink-serial or --jlink-ip):\n"
+        f"{detail.strip()}"
+    )
+
+
+class JLinkBackend(abc.ABC):
+    """How the ``jlink`` driver talks to the probe: the operations it needs.
+
+    The driver serialises calls, checks what needs checking (e.g. that the CPU
+    halted) and does everything else; a backend only carries operations out,
+    raising :class:`TargetError` when one fails.
+
+    Args:
+        ip: Probe IP address, or None.
+        serial: USB serial number, or None.
+        timeout_s: How long one operation may take.
+        log_path: Where to keep the probe software's output.
+    """
+
+    #: The ``backend`` config value that selects it.
+    name: ClassVar[str]
+
+    def __init__(
+        self,
+        *,
+        ip: str | None = None,
+        serial: str | None = None,
+        timeout_s: float = 30.0,
+        log_path: Path | None = None,
+    ) -> None:
+        self.ip = ip
+        self.serial = serial
+        self.timeout_s = timeout_s
+        self.log_path = log_path
+
+    @abc.abstractmethod
+    def start(self) -> None:
+        """Open the probe (not yet the target)."""
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        """Let the probe go. Safe to call more than once, or after a failed start."""
+
+    @abc.abstractmethod
+    def connect(self, device: str, interface: str, speed: int, jtag_conf: str) -> None:
+        """Select the device and interface, and connect to the target."""
+
+    @abc.abstractmethod
+    def vtref(self) -> float:
+        """The target's reference voltage, in volts."""
+
+    @abc.abstractmethod
+    def is_halted(self) -> bool:
+        """True if the CPU is halted."""
+
+    @abc.abstractmethod
+    def halt(self) -> None:
+        """Ask the CPU to halt."""
+
+    @abc.abstractmethod
+    def go(self) -> None:
+        """Let the CPU run."""
+
+    @abc.abstractmethod
+    def step(self) -> None:
+        """Execute one instruction."""
+
+    @abc.abstractmethod
+    def reset(self) -> None:
+        """Reset the target, leaving the CPU halted."""
+
+    @abc.abstractmethod
+    def pulse_reset_pin(self) -> None:
+        """Drive nRESET low, then high again."""
+
+    @abc.abstractmethod
+    def read_register(self, name: str) -> int:
+        """Read a CPU register by name."""
+
+    @abc.abstractmethod
+    def write_register(self, name: str, value: int) -> None:
+        """Write a CPU register by name."""
+
+    @abc.abstractmethod
+    def read_words(self, addr: int, count: int) -> bytes:
+        """Read ``count`` aligned 32-bit words."""
+
+    @abc.abstractmethod
+    def write_words(self, addr: int, data: bytes) -> None:
+        """Write aligned 32-bit words (``len(data)`` is a multiple of 4)."""
+
+    @abc.abstractmethod
+    def set_breakpoint(self, addr: int, hardware: bool) -> int:
+        """Set a breakpoint; return a handle for :meth:`clear_breakpoint`."""
+
+    @abc.abstractmethod
+    def clear_breakpoint(self, handle: int) -> None:
+        """Remove a breakpoint set by :meth:`set_breakpoint`."""
+
+
+# -- J-Link Commander -----------------------------------------------------------------------
+
+
+class JLinkCommander(JLinkBackend):
     """J-Link Commander (``JLinkExe``), driven over pexpect. From APE's wrapper.
 
     Args:
@@ -70,22 +198,14 @@ class JLinkCommander:
         log_path: Where to keep everything Commander printed.
     """
 
+    name: ClassVar[str] = "commander"
     PROMPT = "J-Link>"
+    #: Above this many words, go through a file (savebin/loadbin) instead.
+    BULK_WORDS = 64
 
-    def __init__(
-        self,
-        executable: str = "JLinkExe",
-        *,
-        ip: str | None = None,
-        serial: str | None = None,
-        timeout_s: float = 30.0,
-        log_path: Path | None = None,
-    ) -> None:
+    def __init__(self, executable: str = "JLinkExe", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.executable = executable
-        self.ip = ip
-        self.serial = serial
-        self.timeout_s = timeout_s
-        self.log_path = log_path
         self._proc: Any = None
         self._log_file: Any = None
 
@@ -95,7 +215,7 @@ class JLinkCommander:
             import pexpect
         except ImportError:
             raise ConfigurationError(
-                'the jlink driver needs pexpect: pip install "soc-pastel[jlink]"'
+                'the jlink commander backend needs pexpect: pip install "soc-pastel[jlink]"'
             ) from None
         args = ["-NoGui", "1"]
         if self.ip:
@@ -111,17 +231,7 @@ class JLinkCommander:
             self._proc.logfile_read = self._log_file
         banner = self._expect_prompt("starting J-Link Commander")
         if _ERROR.search(banner):
-            where = (
-                f"at {self.ip}"
-                if self.ip
-                else f"with serial {self.serial}"
-                if self.serial
-                else "on USB"
-            )
-            raise TargetError(
-                f"J-Link Commander can't reach a J-Link {where} (pick one with --jlink-serial "
-                f"or --jlink-ip):\n{banner.strip()}"
-            )
+            raise _no_probe(self.ip, self.serial, f"J-Link Commander says:\n{banner}")
 
     def close(self) -> None:
         """Leave Commander."""
@@ -171,10 +281,9 @@ class JLinkCommander:
 
         return pexpect.EOF
 
-    # -- Commands (as APE's wrapper) ------------------------------------------------------
+    # -- Operations (as APE's wrapper) ---------------------------------------------------
 
-    def connect(self, device: str, interface: str, speed: int, jtag_conf: str) -> None:
-        """Select the device and interface, and connect to the target."""
+    def connect(self, device: str, interface: str, speed: int, jtag_conf: str) -> None:  # noqa: D102
         for cmd in (f"device {device}", f"if {interface}", f"speed {speed}"):
             self.command(cmd)
         if interface.upper() == "JTAG":
@@ -198,6 +307,22 @@ class JLinkCommander:
             return True
         raise TargetError(f"J-Link: cannot tell whether the CPU is halted from:\n{out.strip()}")
 
+    def halt(self) -> None:  # noqa: D102
+        self.command("h")
+
+    def go(self) -> None:  # noqa: D102
+        self.command("g")
+
+    def step(self) -> None:  # noqa: D102
+        self.command("s")
+
+    def reset(self) -> None:  # noqa: D102
+        self.command("r")  # Commander's reset halts the CPU
+
+    def pulse_reset_pin(self) -> None:  # noqa: D102
+        self.command("clrreset")
+        self.command("setreset")
+
     def read_register(self, name: str) -> int:
         """Read a register (``rreg``)."""
         out = self.command(f"rreg {name}")
@@ -205,6 +330,33 @@ class JLinkCommander:
         if not match:
             raise TargetError(f"J-Link: cannot read register {name} from:\n{out.strip()}")
         return int(match.group(1), 16)
+
+    def write_register(self, name: str, value: int) -> None:
+        """Write a register (``setpc`` for the PC, as APE did; ``wreg`` otherwise)."""
+        if name.lower() == "pc":
+            self.command(f"setpc 0x{value:X}")
+        else:
+            self.command(f"wreg {name} 0x{value:X}")
+
+    def read_words(self, addr: int, count: int) -> bytes:  # noqa: D102
+        if count > self.BULK_WORDS:
+            return self.savebin(addr, 4 * count)
+        return struct.pack(f"<{count}I", *self.mem32(addr, count))
+
+    def write_words(self, addr: int, data: bytes) -> None:  # noqa: D102
+        if len(data) > 4 * self.BULK_WORDS:
+            self.loadbin(addr, data)
+        else:
+            self.write32(addr, list(struct.unpack(f"<{len(data) // 4}I", data)))
+
+    def set_breakpoint(self, addr: int, hardware: bool) -> int:
+        """``setbp``; the handle is Commander's, or -1 if it didn't say."""
+        out = self.command(f"setbp 0x{addr:X}" + (" H" if hardware else " S"))
+        match = re.search(r"handle\s*=?\s*(?:0x)?([0-9A-Fa-f]+)", out, re.I)
+        return int(match.group(1), 16) if match else -1
+
+    def clear_breakpoint(self, handle: int) -> None:  # noqa: D102
+        self.command(f"clrbp {handle:X}" if handle >= 0 else "clrbp")
 
     def mem32(self, addr: int, count: int) -> list[int]:
         """Read ``count`` words (``mem32``)."""
@@ -243,37 +395,248 @@ class JLinkCommander:
             os.unlink(path)
 
 
-class _JLinkMemory(WordMemory):
-    """Target memory through J-Link Commander, in aligned 32-bit words."""
+# -- pylink ---------------------------------------------------------------------------------
 
-    #: Above this many words, go through a file (savebin/loadbin) instead.
-    BULK_WORDS = 64
+
+class JLinkPylink(JLinkBackend):
+    """SEGGER's J-Link library, called through pylink (``pylink-square``).
+
+    The library's own log goes to ``log_path``, with a ``>`` line for each
+    call. Opening a probe that isn't there can block inside the library for
+    minutes, so opening and connecting give up after ``timeout_s``.
+
+    Args:
+        library: Path to the J-Link library, or None to let pylink find it.
+        ip: Probe IP address (port 19020 unless given as ``host:port``), or None.
+        serial: USB serial number, or None.
+        timeout_s: How long opening the probe, and connecting, may take.
+        log_path: Where to keep the library's log.
+    """
+
+    name: ClassVar[str] = "pylink"
+    DEFAULT_PORT = 19020
+
+    def __init__(self, library: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.library = library
+        self._pylink: Any = None
+        self._jl: Any = None
+        self._log_file: Any = None
+        self._registers: dict[str, int] = {}
+
+    def _log(self, text: str) -> None:
+        if self._log_file is not None:
+            self._log_file.write(text.rstrip("\n") + "\n")
+            self._log_file.flush()
+
+    def _call(self, what: str, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Call into pylink, logging the call and turning its errors into TargetError."""
+        self._log(f"> {what}")
+        try:
+            return fn(*args, **kwargs)
+        except self._pylink.errors.JLinkException as e:
+            self._log(f"! {e}")
+            raise TargetError(f"J-Link: {what} failed: {e}") from None
+
+    def _bounded(self, what: str, fn: Callable[[], T]) -> T:
+        """Call ``fn`` in a thread, giving up after ``timeout_s`` (the library can hang)."""
+        result: list[Any] = []
+        error: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                result.append(fn())
+            except BaseException as e:  # re-raised below, in the caller's thread
+                error.append(e)
+
+        worker = threading.Thread(target=run, name=f"pylink {what}", daemon=True)
+        worker.start()
+        worker.join(self.timeout_s)
+        if worker.is_alive():
+            # Stuck in the library: abandon the (daemon) thread, and the link with it.
+            self._jl = None
+            raise _no_probe(
+                self.ip, self.serial,
+                f"the J-Link library did not return from {what} within {self.timeout_s:g} s",
+            )  # fmt: skip
+        if error:
+            raise error[0]
+        return result[0]
+
+    def start(self) -> None:
+        """Load the library and open the probe."""
+        try:
+            import pylink
+        except ImportError:
+            raise ConfigurationError(
+                'the jlink pylink backend needs pylink-square: pip install "soc-pastel[jlink]"'
+            ) from None
+        self._pylink = pylink
+        if self.log_path is not None:
+            self._log_file = open(self.log_path, "w")
+        library = self.library or os.environ.get("PASTEL_JLINK_LIBRARY")
+        try:
+            lib = pylink.library.Library(library) if library else None
+            self._jl = pylink.JLink(
+                lib=lib,
+                log=self._log,
+                detailed_log=lambda s: None,
+                error=lambda s: self._log(f"ERROR: {s}"),
+                warn=lambda s: self._log(f"WARNING: {s}"),
+            )
+        except (OSError, TypeError) as e:
+            raise ConfigurationError(
+                f"cannot load SEGGER's J-Link library ({library or 'as found by pylink'}): "
+                f"{e or 'not found'}. Install the J-Link software, or set the binding's "
+                "'library' or $PASTEL_JLINK_LIBRARY"
+            ) from None
+        ip_addr = None
+        if self.ip:
+            if str(self.ip).lower().startswith("tunnel:"):
+                raise ConfigurationError(
+                    "the jlink pylink backend can't open a SEGGER tunnel by name: "
+                    "use the commander backend (--jlink-backend=commander)"
+                )
+            ip_addr = self.ip if ":" in str(self.ip) else f"{self.ip}:{self.DEFAULT_PORT}"
+        serial = int(self.serial) if self.serial else None
+        self._log(f"> open(serial_no={serial}, ip_addr={ip_addr})")
+        jl = self._jl
+        try:
+            self._bounded("open()", lambda: jl.open(serial_no=serial, ip_addr=ip_addr))
+        except pylink.errors.JLinkException as e:
+            raise _no_probe(self.ip, self.serial, str(e)) from None
+
+    def close(self) -> None:  # noqa: D102
+        jl, self._jl = self._jl, None
+        if jl is not None:
+            try:
+                jl.close()
+            except Exception:
+                pass
+        if self._log_file is not None:
+            self._log_file.close()
+            self._log_file = None
+
+    def _link(self) -> Any:
+        if self._jl is None:
+            raise TargetError("the J-Link is not open")
+        return self._jl
+
+    def connect(self, device: str, interface: str, speed: int, jtag_conf: str) -> None:  # noqa: D102
+        jl = self._link()
+        tif = getattr(self._pylink.enums.JLinkInterfaces, interface.upper(), None)
+        if tif is None:
+            raise ConfigurationError(f"jlink: unknown interface {interface!r}")
+        self._call(f"set_tif({interface})", jl.set_tif, tif)
+        if interface.upper() == "JTAG":
+            pre = [int(v) for v in jtag_conf.split()]
+            if pre != [-1, -1]:  # -1 -1: let the library find the device on the chain
+                self._call(f"jtag_configure({jtag_conf})", jl.jtag_configure, *pre)
+        self._bounded(
+            f"connect({device})",
+            lambda: self._call(f"connect({device}, speed={speed})", jl.connect, device, speed),
+        )
+        self._registers = {}
+        for index in self._call("register_list()", jl.register_list):
+            # Names such as "PC" or "X10 (A0)": each name and alias finds the register.
+            for alias in re.findall(r"[\w.]+", jl.register_name(index)):
+                self._registers.setdefault(alias.lower(), index)
+
+    def vtref(self) -> float:  # noqa: D102
+        status = self._call("hardware_status", lambda: self._link().hardware_status)
+        return status.voltage / 1000.0
+
+    def is_halted(self) -> bool:  # noqa: D102
+        return bool(self._call("halted()", self._link().halted))
+
+    def halt(self) -> None:  # noqa: D102
+        self._call("halt()", self._link().halt)
+
+    def go(self) -> None:  # noqa: D102
+        self._call("restart()", self._link().restart)
+
+    def step(self) -> None:  # noqa: D102
+        self._call("step()", self._link().step)
+
+    def reset(self) -> None:  # noqa: D102
+        self._call("reset(halt=True)", self._link().reset, halt=True)
+
+    def pulse_reset_pin(self) -> None:  # noqa: D102
+        jl = self._link()
+        self._call("set_reset_pin_low()", jl.set_reset_pin_low)
+        time.sleep(0.01)
+        self._call("set_reset_pin_high()", jl.set_reset_pin_high)
+
+    def _register(self, name: str) -> int:
+        try:
+            return self._registers[name.lower()]
+        except KeyError:
+            known = ", ".join(sorted(self._registers)) or "none"
+            raise TargetError(
+                f"J-Link: register {name} not found (the library knows {known})"
+            ) from None
+
+    def read_register(self, name: str) -> int:  # noqa: D102
+        index = self._register(name)
+        return int(self._call(f"register_read({name})", self._link().register_read, index))
+
+    def write_register(self, name: str, value: int) -> None:  # noqa: D102
+        index = self._register(name)
+        self._call(f"register_write({name}, {value:#x})", self._link().register_write, index, value)
+
+    def read_words(self, addr: int, count: int) -> bytes:  # noqa: D102
+        words = self._call(
+            f"memory_read32({addr:#x}, {count})", self._link().memory_read32, addr, count
+        )
+        return struct.pack(f"<{count}I", *words)
+
+    def write_words(self, addr: int, data: bytes) -> None:  # noqa: D102
+        words = list(struct.unpack(f"<{len(data) // 4}I", data))
+        self._call(
+            f"memory_write32({addr:#x}, {len(words)} words)",
+            self._link().memory_write32, addr, words,
+        )  # fmt: skip
+
+    def set_breakpoint(self, addr: int, hardware: bool) -> int:  # noqa: D102
+        jl = self._link()
+        kind = "hardware" if hardware else "software"
+        setter = jl.hardware_breakpoint_set if hardware else jl.software_breakpoint_set
+        return int(self._call(f"{kind}_breakpoint_set({addr:#x})", setter, addr))
+
+    def clear_breakpoint(self, handle: int) -> None:  # noqa: D102
+        if not self._call(f"breakpoint_clear({handle})", self._link().breakpoint_clear, handle):
+            raise TargetError(f"J-Link: could not clear breakpoint {handle}")
+
+
+#: The backends, by ``backend`` config value.
+BACKENDS: dict[str, type[JLinkBackend]] = {b.name: b for b in (JLinkCommander, JLinkPylink)}
+
+
+# -- The driver -----------------------------------------------------------------------------
+
+
+class _JLinkMemory(WordMemory):
+    """Target memory through the J-Link, in aligned 32-bit words."""
 
     def __init__(self, jlink: JLink) -> None:
         self._jlink = jlink
 
     def _read_words(self, addr: int, count: int) -> bytes:
         with self._jlink._lock:
-            jl = self._jlink._commander()
-            if count > self.BULK_WORDS:
-                return jl.savebin(addr, 4 * count)
-            return struct.pack(f"<{count}I", *jl.mem32(addr, count))
+            return self._jlink._backend().read_words(addr, count)
 
     def _write_words(self, addr: int, data: bytes) -> None:
         with self._jlink._lock:
-            jl = self._jlink._commander()
-            if len(data) > 4 * self.BULK_WORDS:
-                jl.loadbin(addr, data)
-            else:
-                jl.write32(addr, list(struct.unpack(f"<{len(data) // 4}I", data)))
+            self._jlink._backend().write_words(addr, data)
 
 
 class JLink(OnChipDebug):
-    """On-chip debug through a SEGGER J-Link, driving J-Link Commander.
+    """On-chip debug through a SEGGER J-Link, by Commander or by pylink.
 
-    For hardware platforms (FPGA boards, silicon). Commander's output goes to
-    ``jlink.log`` in the test's run directory. Commands are serialised, so the
-    firmware runner can poll memory while a test calls in from a callback.
+    For hardware platforms (FPGA boards, silicon). The probe software's output
+    goes to ``jlink.log`` in the test's run directory. Operations are
+    serialised, so the firmware runner can poll memory while a test calls in
+    from a callback.
     """
 
     impl_name: ClassVar[str] = "jlink"
@@ -287,32 +650,50 @@ class JLink(OnChipDebug):
             raise ConfigurationError(
                 f"{name}: jlink config needs 'device' (the J-Link device name)"
             )
+        self._backend_class(config.get("backend", "commander"), "its 'backend'")
         self._lock = threading.RLock()
-        self._jl: JLinkCommander | None = None
+        self._jl: JLinkBackend | None = None
         self._memory = _JLinkMemory(self)
-        self._breakpoints: dict[int, int] = {}  # address -> Commander's handle
+        self._breakpoints: dict[int, int] = {}  # address -> the backend's handle
 
-    def _commander(self) -> JLinkCommander:
+    def _backend_class(self, backend: str, source: str) -> type[JLinkBackend]:
+        try:
+            return BACKENDS[backend]
+        except KeyError:
+            raise ConfigurationError(
+                f"{self.name}: unknown jlink backend {backend!r} (from {source}); "
+                f"choose from {', '.join(BACKENDS)}"
+            ) from None
+
+    def _backend(self) -> JLinkBackend:
         if self._jl is None:
             raise TargetError("the J-Link is not connected")
         return self._jl
 
-    def _cmd(self, cmd: str, **kwargs: Any) -> str:
-        with self._lock:
-            return self._commander().command(cmd, **kwargs)
+    @property
+    def backend(self) -> str:
+        """The backend in use (or to be used): ``--jlink-backend``, else the binding's."""
+        options = self.harness.platform.options
+        return options.get("jlink_backend") or self.config.get("backend", "commander")
 
     # -- Lifecycle ----------------------------------------------------------------------
 
     def open(self) -> None:  # noqa: D102
         options = self.harness.platform.options
         cfg = self.config
-        self._jl = JLinkCommander(
-            cfg.get("executable") or os.environ.get("PASTEL_JLINKEXE", "JLinkExe"),
+        source = "--jlink-backend" if options.get("jlink_backend") else "its 'backend'"
+        backend_class = self._backend_class(self.backend, source)
+        common: dict[str, Any] = dict(
             ip=options.get("jlink_ip") or cfg.get("ip"),
             serial=options.get("jlink_serial") or cfg.get("serial"),
             timeout_s=float(cfg.get("timeout_s", 30)),
             log_path=self.harness.platform.run_dir / "jlink.log",
         )
+        if backend_class is JLinkCommander:
+            exe = cfg.get("executable") or os.environ.get("PASTEL_JLINKEXE", "JLinkExe")
+            self._jl = JLinkCommander(exe, **common)
+        else:
+            self._jl = JLinkPylink(cfg.get("library"), **common)
         with self._lock:
             self._jl.start()
             minimum = float(cfg.get("min_vtref", 1.0))
@@ -329,7 +710,7 @@ class JLink(OnChipDebug):
                 int(cfg.get("speed", 4000)),
                 cfg.get("jtag_conf", "-1 -1"),
             )
-        log.info("J-Link connected (%s)", cfg["device"])
+        log.info("J-Link connected (%s, through %s)", cfg["device"], self.backend)
 
     def close(self) -> None:  # noqa: D102
         with self._lock:
@@ -341,54 +722,58 @@ class JLink(OnChipDebug):
 
     def reset(self, *, halt: bool = True) -> None:  # noqa: D102
         with self._lock:
+            jl = self._backend()
             if self.config.get("reset_pin"):
-                self._cmd("clrreset")  # nRESET low ...
-                self._cmd("setreset")  # ... and high again (as APE did)
-            self._cmd("r")  # Commander's reset halts the CPU
+                jl.pulse_reset_pin()  # as APE did, before the debug reset
+            jl.reset()
             if not halt:
-                self._cmd("g")
-            elif not self._commander().is_halted():
+                jl.go()
+            elif not jl.is_halted():
                 raise TargetError("target did not halt after reset")
 
     def halt(self) -> None:  # noqa: D102
         with self._lock:
-            self._cmd("h")
-            if not self._commander().is_halted():
+            jl = self._backend()
+            jl.halt()
+            if not jl.is_halted():
                 raise TargetError("target did not halt")
 
     def resume(self, pc: int | None = None) -> None:  # noqa: D102
         with self._lock:
+            jl = self._backend()
             if pc is not None:
-                self._cmd(f"setpc 0x{pc:X}")
-            self._cmd("g")
+                jl.write_register("pc", pc)
+            jl.go()
 
     def step(self) -> None:  # noqa: D102
-        self._cmd("s")
+        with self._lock:
+            self._backend().step()
 
     def state(self) -> TargetState:  # noqa: D102
         with self._lock:
-            halted = self._commander().is_halted()
+            halted = self._backend().is_halted()
         return TargetState.HALTED if halted else TargetState.RUNNING
 
     def read_register(self, name: str) -> int:  # noqa: D102
         with self._lock:
-            return self._commander().read_register(name)
+            return self._backend().read_register(name)
 
     def write_register(self, name: str, value: int) -> None:  # noqa: D102
-        self._cmd(f"wreg {name} 0x{value:X}")
+        with self._lock:
+            self._backend().write_register(name, value)
 
     @property
     def memory(self) -> MemoryInterface:  # noqa: D102
         return self._memory
 
     def add_breakpoint(self, addr: int, *, hardware: bool = True) -> int:  # noqa: D102
-        out = self._cmd(f"setbp 0x{addr:X}" + (" H" if hardware else " S"))
-        match = re.search(r"handle\s*=?\s*(?:0x)?([0-9A-Fa-f]+)", out, re.I)
-        self._breakpoints[addr] = int(match.group(1), 16) if match else -1
+        with self._lock:
+            self._breakpoints[addr] = self._backend().set_breakpoint(addr, hardware)
         return addr
 
     def remove_breakpoint(self, breakpoint_id: int) -> None:  # noqa: D102
-        handle = self._breakpoints.pop(breakpoint_id, None)
-        if handle is None:
-            raise TargetError(f"no breakpoint at {breakpoint_id:#x}")
-        self._cmd(f"clrbp {handle:X}" if handle >= 0 else "clrbp")
+        with self._lock:
+            handle = self._breakpoints.pop(breakpoint_id, None)
+            if handle is None:
+                raise TargetError(f"no breakpoint at {breakpoint_id:#x}")
+            self._backend().clear_breakpoint(handle)

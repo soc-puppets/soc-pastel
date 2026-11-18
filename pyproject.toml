@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jlink = ["pexpect>=4.8"]
+jlink = ["pexpect>=4.8", "pylink-square>=1.2"]
 pyocd = ["pyocd>=0.36"]
 dev = ["ruff>=0.15", "pytest-cov", "pytest-xdist"]
 docs = ["sphinx>=8", "sphinx-rtd-theme>=3.0", "sphinx-copybutton>=0.5"]
