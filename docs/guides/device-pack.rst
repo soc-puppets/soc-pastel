@@ -538,6 +538,30 @@ whose memory map differs, and on-chip debug bindings for the ``fpga`` and
 interfaces are bound the same way, per platform: GPIO now, SPI and UART as
 their interface packs become available.
 
+``--platform=fpga`` runs on an FPGA board that is powered and connected
+through a debug probe. ``--fpga-program=<command>`` runs a command that loads
+the bitstream, once per session. A variant for the FPGA lists its memory
+without ``backdoor`` names (there is no simulator to reach in), and its debug
+binding names the probe: OpenOCD with an inline ``transport`` for the cable,
+as VeeRwolf's FPGA variant does, or a SEGGER J-Link:
+
+.. code-block:: python
+
+   "on_chip_debug": InterfaceBinding(type="on_chip_debug", impls={
+       "sim": {...},
+       "fpga": {"impl": "jlink", "device": "RISC-V", "interface": "JTAG", "speed": 4000},
+   }),
+
+The ``jlink`` driver runs SEGGER's J-Link Commander (``JLinkExe``), so SEGGER's
+J-Link software must be installed, plus ``pip install "soc-pastel[jlink]"``.
+Pick a probe with ``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP or a
+SEGGER tunnel). Its output goes to ``jlink.log`` in the test's run directory.
+See :mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every option.
+
+On hardware, firmware loads and RTT is read through the probe, so a code
+location's ``rtt`` region must be readable while the CPU runs. Tests that need
+a backdoor, simulation time or waves are skipped.
+
 Checklist
 ---------
 

@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jlink = ["pylink-square>=1.2"]
+jlink = ["pexpect>=4.8"]
 pyocd = ["pyocd>=0.36"]
 dev = ["ruff>=0.15", "pytest-cov", "pytest-xdist"]
 docs = ["sphinx>=8", "sphinx-rtd-theme>=3.0", "sphinx-copybutton>=0.5"]
@@ -57,6 +57,7 @@ verilator = "soc_pastel.sim.verilator:VerilatorPlatform"
 xcelium = "soc_pastel.sim.xcelium:XceliumPlatform"
 vcs = "soc_pastel.sim.vcs:VcsPlatform"
 questa = "soc_pastel.sim.questa:QuestaPlatform"
+fpga = "soc_pastel.hardware:FpgaPlatform"
 
 [project.entry-points."soc_pastel.hdl"]
 soc_pastel = "soc_pastel:HDL_ROOT"

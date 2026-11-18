@@ -98,3 +98,40 @@ class RoutedMemory(MemoryInterface):
 
     def can_access(self, addr: int, length: int = 1) -> bool:  # noqa: D102
         return self.route(addr, length).can_access(addr, length)
+
+
+class WordMemory(MemoryInterface):
+    """Memory reached in aligned 32-bit words, e.g. through a debug probe.
+
+    Byte-granular reads and writes are made of whole words, read-modify-writing
+    partial words at the edges: some memories (VeeR's ICCM, for one) reject
+    byte accesses over debug. Subclasses provide :meth:`_read_words` and
+    :meth:`_write_words`.
+    """
+
+    name = "on_chip_debug"
+
+    @abstractmethod
+    def _read_words(self, addr: int, count: int) -> bytes:
+        """Read ``count`` 32-bit words from word-aligned ``addr``, as bytes."""
+
+    @abstractmethod
+    def _write_words(self, addr: int, data: bytes) -> None:
+        """Write whole 32-bit words (``len(data)`` a multiple of 4) at word-aligned ``addr``."""
+
+    def read(self, addr: int, length: int) -> bytes:  # noqa: D102
+        start, end = addr & ~3, (addr + length + 3) & ~3
+        data = self._read_words(start, (end - start) // 4)
+        return data[addr - start : addr - start + length]
+
+    def write(self, addr: int, data: bytes) -> None:  # noqa: D102
+        if not data:
+            return
+        start, end = addr & ~3, (addr + len(data) + 3) & ~3
+        buf = bytearray(end - start)
+        if addr != start:
+            buf[0:4] = self._read_words(start, 1)
+        if addr + len(data) != end:
+            buf[-4:] = self._read_words(end - 4, 1)
+        buf[addr - start : addr - start + len(data)] = data
+        self._write_words(start, bytes(buf))

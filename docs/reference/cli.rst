@@ -78,6 +78,20 @@ own names; see :doc:`../guides/simulators`.
    * - ``--xcelium-build-prefix=<cmd>``
      - Run Xcelium's elaboration under a command, e.g. ``srun -c 8``.
 
+FPGA platform (``--platform=fpga``) and debug probes:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--fpga-program=<cmd>``
+     - A shell command that programs the FPGA, run once before the first test.
+   * - ``--jlink-serial=<sn>``
+     - The USB J-Link to use, by serial number (``jlink`` driver).
+   * - ``--jlink-ip=<addr>``
+     - A J-Link over IP, or a SEGGER tunnel (``tunnel:<name>``).
+
 Markers
 -------
 
@@ -128,6 +142,8 @@ Environment variables
      - Toolchain prefix (default ``riscv64-unknown-elf-``)
    * - ``PASTEL_OPENOCD``
      - OpenOCD executable (default ``openocd``)
+   * - ``PASTEL_JLINKEXE``
+     - J-Link Commander, for the ``jlink`` driver (default ``JLinkExe``)
    * - ``PASTEL_VEERWOLF_WORKSPACE``
      - Existing FuseSoC workspace for the VeeRwolf pack
 

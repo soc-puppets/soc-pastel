@@ -52,6 +52,13 @@ Core
    :members:
    :show-inheritance:
 
+Hardware
+--------
+
+.. automodule:: soc_pastel.hardware
+   :members:
+   :show-inheritance:
+
 Reporting
 ---------
 
@@ -117,6 +124,10 @@ Interfaces
 ----------
 
 .. automodule:: soc_pastel.interfaces.on_chip_debug.openocd
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.interfaces.on_chip_debug.jlink
    :members:
    :show-inheritance:
 

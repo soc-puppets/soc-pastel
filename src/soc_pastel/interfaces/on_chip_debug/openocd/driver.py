@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from soc_pastel.core.errors import ConfigurationError, PastelTimeout, TargetError
-from soc_pastel.core.memory import MemoryInterface
+from soc_pastel.core.memory import MemoryInterface, WordMemory
 from soc_pastel.core.on_chip_debug import OnChipDebug, TargetState
 from soc_pastel.core.platform import Sidecar, SimulationPlatform
 
@@ -332,15 +332,9 @@ class OpenOcd(OnChipDebug):
         self.tcl(f"rbp {breakpoint_id:#x}")
 
 
-class _OcdMemory(MemoryInterface):
-    """Memory access through OpenOCD's read_memory/write_memory.
+class _OcdMemory(WordMemory):
+    """Memory access through OpenOCD's read_memory/write_memory, in aligned words."""
 
-    Always uses aligned 32-bit accesses, read-modify-writing partial words at
-    the edges: some memories (VeeR's ICCM, for one) reject byte accesses over
-    debug.
-    """
-
-    name = "on_chip_debug"
     WORDS_PER_CMD = 256
 
     def __init__(self, ocd: OpenOcd) -> None:
@@ -359,20 +353,3 @@ class _OcdMemory(MemoryInterface):
         for start in range(0, len(words), self.WORDS_PER_CMD):
             chunk = " ".join(f"{w:#x}" for w in words[start : start + self.WORDS_PER_CMD])
             self._ocd.tcl(f"write_memory {addr + 4 * start:#x} 32 {{{chunk}}}")
-
-    def read(self, addr: int, length: int) -> bytes:  # noqa: D102
-        start, end = addr & ~3, (addr + length + 3) & ~3
-        data = self._read_words(start, (end - start) // 4)
-        return data[addr - start : addr - start + length]
-
-    def write(self, addr: int, data: bytes) -> None:  # noqa: D102
-        if not data:
-            return
-        start, end = addr & ~3, (addr + len(data) + 3) & ~3
-        buf = bytearray(end - start)
-        if addr != start:
-            buf[0:4] = self._read_words(start, 1)
-        if addr + len(data) != end:
-            buf[-4:] = self._read_words(end - 4, 1)
-        buf[addr - start : addr - start + len(data)] = data
-        self._write_words(start, bytes(buf))

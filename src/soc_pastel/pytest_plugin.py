@@ -84,6 +84,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="How long to wait for the simulator to connect "
         "(default 120, or 3600 with a launcher, to allow for queueing).",
     )
+    probe = parser.getgroup("soc-pastel debug probes")
+    probe.addoption(
+        "--jlink-ip",
+        metavar="ADDR",
+        help="J-Link to use, over IP or a SEGGER tunnel ('tunnel:<name>'); jlink driver.",
+    )
+    probe.addoption(
+        "--jlink-serial", metavar="SN", help="USB J-Link to use, by serial number; jlink driver."
+    )
     for name in registry.platform_names():
         try:
             registry.platform(name).add_options(parser)
