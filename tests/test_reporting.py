@@ -75,3 +75,44 @@ def test_failure_blocks_under_xdist(tmp_path):
     out = run(tmp_path, "-n", "2")
     assert "test_demo.py::test_fails failed" in out and "  sim.log" in out
     assert "run directories of failing tests" in out
+
+
+def run_in_terminal(tmp_path, *args):
+    """Like run(), but with pytest's output on a pseudo-terminal, as when run by hand.
+
+    pytest captures a test's output differently on a terminal than on a pipe:
+    progress lines were once lost on terminals while tests over pipes passed.
+    """
+    import os
+    import pty
+
+    (tmp_path / "test_demo.py").write_text(textwrap.dedent(TESTS))
+    controller, terminal = pty.openpty()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args, str(tmp_path)],
+        stdin=subprocess.DEVNULL,
+        stdout=terminal,
+        stderr=terminal,
+        cwd=tmp_path,
+    )
+    os.close(terminal)
+    out = b""
+    while True:
+        try:
+            chunk = os.read(controller, 65536)
+        except OSError:  # the terminal closed: pytest has exited
+            break
+        if not chunk:
+            break
+        out += chunk
+    proc.wait()
+    os.close(controller)
+    text = out.decode(errors="replace").replace("\r", "")
+    return __import__("re").sub(r"\x1b\[[0-9;]*m", "", text)  # drop colours
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX pseudo-terminal")
+def test_progress_and_failures_reach_a_real_terminal(tmp_path):
+    out = run_in_terminal(tmp_path)
+    assert "pastel [test_passes] simulator started; run directory /somewhere" in out
+    assert "test_demo.py::test_fails failed" in out and "  sim.log" in out

@@ -21,6 +21,7 @@ Paths travel in each report's ``user_properties`` (keys starting
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -41,9 +42,10 @@ RUN_LOGS = ("*.log", "fw/*/build.log")
 class LiveLog(logging.Handler):
     """Writes PASTEL's log records to the terminal as they happen, tagged with the test."""
 
-    def __init__(self, terminal: Any) -> None:
+    def __init__(self, terminal: Any, capture: Any = None) -> None:
         super().__init__(logging.INFO)
         self.terminal = terminal
+        self.capture = capture  # pytest's capture manager, if capturing
         self.test = ""
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D102
@@ -59,11 +61,21 @@ class LiveLog(logging.Handler):
                 if record.levelno >= logging.WARNING
                 else {}
             )
-            self.terminal.ensure_newline()
             first, *rest = text.splitlines() or [""]
-            self.terminal.write_line(f"pastel {tag}{first}", **colour)
-            for line in rest:
-                self.terminal.write_line(f"    {line}", **colour)
+            # During a test pytest captures the process's output; without this
+            # the lines would go into the capture (and be dropped if the test
+            # passes) rather than to the terminal. pytest's own live logging
+            # does the same.
+            paused = (
+                self.capture.global_and_fixture_disabled()
+                if self.capture is not None
+                else contextlib.nullcontext()
+            )
+            with paused:
+                self.terminal.ensure_newline()
+                self.terminal.write_line(f"pastel {tag}{first}", **colour)
+                for line in rest:
+                    self.terminal.write_line(f"    {line}", **colour)
         except Exception:  # never let reporting break a test
             self.handleError(record)
 
@@ -90,7 +102,7 @@ class Reporter:
         quiet = config.getoption("pastel_quiet", False)
         worker = hasattr(config, "workerinput")  # an xdist worker has no terminal of its own
         if self.terminal is not None and not quiet and not worker:
-            self.live = LiveLog(self.terminal)
+            self.live = LiveLog(self.terminal, config.pluginmanager.get_plugin("capturemanager"))
             logger = logging.getLogger("soc_pastel")
             logger.addHandler(self.live)
             if logger.getEffectiveLevel() > logging.INFO:
