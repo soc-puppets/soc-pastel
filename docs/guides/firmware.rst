@@ -20,7 +20,9 @@ The API
    * - ``int test_main(void)``
      - Defined by each test. Return 0 to pass.
    * - ``pastel_printf(fmt, ...)``
-     - ``%d %i %u %x %X %p %s %c %%``, with ``0`` flag and width
+     - ``%d %i %u %x %X %p %s %c %%``, with ``0`` flag and width, and the
+       ``l``, ``h``, ``z``, ``t`` length modifiers, so ``%lu`` and ``PRIu32`` work.
+       ``ll`` (64-bit) isn't supported.
    * - ``pastel_puts(s)``
      - Print a line
    * - ``PASTEL_INFO(fmt, ...)``

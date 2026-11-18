@@ -12,6 +12,7 @@ def test_hello(firmware):
     assert result.passed
     assert f"Hello from {firmware.harness.device.name}" in result.output
     assert "signed -42, unsigned 42, hex 0x00c0ffee" in result.output
+    assert "uint32_t 42, hex 0x00c0ffee" in result.output  # %lu, %lx
     assert seen == [1]
     assert result.data == [bytes.fromhex("deadbeef")]
 

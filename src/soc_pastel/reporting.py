@@ -54,7 +54,7 @@ def turn_on_live_logging(config: pytest.Config) -> None:
         return
     if config.getoption("log_cli_level", None) is None and not config.getini("log_cli"):
         config.option.log_cli_level = "INFO"  # pytest takes a level as "on"
-    if config.getoption("log_cli_format", None) is None and "log_cli_format" not in config.inicfg:
+    if config.getoption("log_cli_format", None) is None and config.getini("log_cli_format") is None:
         config.option.log_cli_format = LIVE_FORMAT
 
 

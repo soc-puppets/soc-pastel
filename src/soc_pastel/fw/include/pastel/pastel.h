@@ -14,7 +14,8 @@
 
 #include "pastel/mailbox.h"
 
-// printf subset: %d %i %u %x %X %p %s %c %%, with optional '0' flag and width.
+// printf subset: %d %i %u %x %X %p %s %c %%, with optional '0' flag, width, and
+// the l, h, z, t length modifiers (so %lu and PRIu32 work); not ll (64-bit).
 void pastel_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void pastel_puts(const char *s);
 // Format into buf (always NUL-terminated if size > 0); return the full length.

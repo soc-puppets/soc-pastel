@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // printf, and formatting into buffers, for test firmware. Supports
-// %d %i %u %x %X %p %s %c %% with an optional '0' flag and width.
+// %d %i %u %x %X %p %s %c %% with an optional '0' flag, a width, and the
+// l, h, z and t length modifiers (all 32 bits or less on RV32; not ll).
 #include <stdarg.h>
 #include <stdint.h>
 
@@ -63,6 +64,9 @@ static void format(const sink_t *k, const char *fmt, va_list ap) {
       fmt++;
     }
     while (*fmt >= '0' && *fmt <= '9') width = width * 10 + (*fmt++ - '0');
+    // Length modifiers no wider than 32 bits on RV32 (l, h, hh, z, t), so
+    // %lu and PRIu32 ("lu" with this toolchain) work. ll (64-bit) doesn't.
+    while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z' || *fmt == 't') fmt++;
     switch (*fmt) {
       case 'd':
       case 'i': {
