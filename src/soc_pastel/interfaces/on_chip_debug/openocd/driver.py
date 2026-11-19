@@ -297,10 +297,10 @@ class OpenOcd(OnChipDebug):
         if self.state() is not TargetState.HALTED:
             raise TargetError("target did not halt")
 
-    def resume(self, pc: int | None = None) -> None:  # noqa: D102
+    def _resume(self, pc: int | None) -> None:
         self.tcl("resume" if pc is None else f"resume {pc:#x}")
 
-    def step(self) -> None:  # noqa: D102
+    def _step(self) -> None:
         self.tcl("step")
 
     def state(self) -> TargetState:  # noqa: D102
@@ -324,11 +324,11 @@ class OpenOcd(OnChipDebug):
     def memory(self) -> MemoryInterface:  # noqa: D102
         return self._memory
 
-    def add_breakpoint(self, addr: int, *, hardware: bool = True) -> int:  # noqa: D102
+    def _add_breakpoint(self, addr: int, *, hardware: bool) -> int:
         self.tcl(f"bp {addr:#x} 4" + (" hw" if hardware else ""))
         return addr
 
-    def remove_breakpoint(self, breakpoint_id: int) -> None:  # noqa: D102
+    def _remove_breakpoint(self, breakpoint_id: int) -> None:
         self.tcl(f"rbp {breakpoint_id:#x}")
 
 

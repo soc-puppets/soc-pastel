@@ -140,7 +140,8 @@ def make_module() -> types.ModuleType:
             return REGISTER_NAMES[register_index]
 
         def register_read(self, register_index):
-            return self.regs[register_index]
+            value = self.regs[register_index] & 0xFFFF_FFFF
+            return value - (1 << 32) if value & 0x8000_0000 else value  # a C int, as pylink's
 
         def register_write(self, reg_index, value):
             self.regs[reg_index] = value

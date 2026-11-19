@@ -50,10 +50,10 @@ class FakeOcd(OnChipDebug):
     def halt(self):
         pass
 
-    def resume(self, pc=None):
+    def _resume(self, pc):
         pass
 
-    def step(self):
+    def _step(self):
         pass
 
     def state(self):
@@ -69,10 +69,10 @@ class FakeOcd(OnChipDebug):
     def memory(self):
         return self._mem
 
-    def add_breakpoint(self, addr, *, hardware=True):
+    def _add_breakpoint(self, addr, *, hardware):
         return 0
 
-    def remove_breakpoint(self, breakpoint_id):
+    def _remove_breakpoint(self, breakpoint_id):
         pass
 
 

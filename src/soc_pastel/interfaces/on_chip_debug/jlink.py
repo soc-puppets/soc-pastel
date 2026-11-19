@@ -644,7 +644,8 @@ class JLinkPylink(JLinkBackend):
 
     def read_register(self, name: str) -> int:  # noqa: D102
         index = self._register(name)
-        return int(self._call(f"register_read({name})", self._link().register_read, index))
+        value = self._call(f"register_read({name})", self._link().register_read, index)
+        return int(value) & 0xFFFF_FFFF  # pylink hands back the library's U32 as a signed int
 
     def write_register(self, name: str, value: int) -> None:  # noqa: D102
         index = self._register(name)
@@ -725,7 +726,7 @@ class JLink(OnChipDebug):
         self._lock = threading.RLock()
         self._jl: JLinkBackend | None = None
         self._memory = _JLinkMemory(self)
-        self._breakpoints: dict[int, int] = {}  # address -> the backend's handle
+        self._bp_handles: dict[int, int] = {}  # address -> the backend's handle
 
     def _backend_class(self, backend: str, source: str) -> type[JLinkBackend]:
         try:
@@ -809,14 +810,14 @@ class JLink(OnChipDebug):
             if not jl.is_halted():
                 raise TargetError("target did not halt")
 
-    def resume(self, pc: int | None = None) -> None:  # noqa: D102
+    def _resume(self, pc: int | None) -> None:
         with self._lock:
             jl = self._backend()
             if pc is not None:
                 self._halted_for("setting the PC").write_register("pc", pc)
             jl.go()
 
-    def step(self) -> None:  # noqa: D102
+    def _step(self) -> None:
         with self._lock:
             self._backend().step()
 
@@ -845,14 +846,14 @@ class JLink(OnChipDebug):
     def memory(self) -> MemoryInterface:  # noqa: D102
         return self._memory
 
-    def add_breakpoint(self, addr: int, *, hardware: bool = True) -> int:  # noqa: D102
+    def _add_breakpoint(self, addr: int, *, hardware: bool) -> int:
         with self._lock:
-            self._breakpoints[addr] = self._backend().set_breakpoint(addr, hardware)
+            self._bp_handles[addr] = self._backend().set_breakpoint(addr, hardware)
         return addr
 
-    def remove_breakpoint(self, breakpoint_id: int) -> None:  # noqa: D102
+    def _remove_breakpoint(self, breakpoint_id: int) -> None:
         with self._lock:
-            handle = self._breakpoints.pop(breakpoint_id, None)
+            handle = self._bp_handles.pop(breakpoint_id, None)
             if handle is None:
                 raise TargetError(f"no breakpoint at {breakpoint_id:#x}")
             self._backend().clear_breakpoint(handle)
