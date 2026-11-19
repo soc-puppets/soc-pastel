@@ -28,8 +28,8 @@ Binding config keys:
 - ``device``: the J-Link device name, e.g. ``"RISC-V"``.
 - ``interface``: ``"JTAG"`` (default) or ``"SWD"``.
 - ``speed``: interface speed in kHz (default 4000).
-- ``ip``: connect to a J-Link over IP, e.g. ``"192.168.1.20"``, or (commander
-  only) a SEGGER tunnel, ``"tunnel:<name>"``. ``serial``: pick a USB J-Link by
+- ``ip``: connect to a J-Link over IP, e.g. ``"192.168.1.20"``, or through a
+  SEGGER tunnel, ``"tunnel:<name or serial>"``. ``serial``: pick a USB J-Link by
   serial number. Neither: the only USB J-Link. Both can be given at run time
   with ``--jlink-ip`` and ``--jlink-serial``.
 - ``jtag_conf``: the JTAG chain position, ``"<IRPre> <DRPre>"`` (default
@@ -407,7 +407,8 @@ class JLinkPylink(JLinkBackend):
 
     Args:
         library: Path to the J-Link library, or None to let pylink find it.
-        ip: Probe IP address (port 19020 unless given as ``host:port``), or None.
+        ip: Probe IP address or ``tunnel:<name>``, with ``:<port>`` if not
+            19020; or None.
         serial: USB serial number, or None.
         timeout_s: How long opening the probe, and connecting, may take.
         log_path: Where to keep the library's log.
@@ -490,14 +491,7 @@ class JLinkPylink(JLinkBackend):
                 f"{e or 'not found'}. Install the J-Link software, or set the binding's "
                 "'library' or $PASTEL_JLINK_LIBRARY"
             ) from None
-        ip_addr = None
-        if self.ip:
-            if str(self.ip).lower().startswith("tunnel:"):
-                raise ConfigurationError(
-                    "the jlink pylink backend can't open a SEGGER tunnel by name: "
-                    "use the commander backend (--jlink-backend=commander)"
-                )
-            ip_addr = self.ip if ":" in str(self.ip) else f"{self.ip}:{self.DEFAULT_PORT}"
+        ip_addr = self.ip_addr(self.ip) if self.ip else None
         serial = int(self.serial) if self.serial else None
         self._log(f"> open(serial_no={serial}, ip_addr={ip_addr})")
         jl = self._jl
@@ -505,6 +499,18 @@ class JLinkPylink(JLinkBackend):
             self._bounded("open()", lambda: jl.open(serial_no=serial, ip_addr=ip_addr))
         except pylink.errors.JLinkException as e:
             raise _no_probe(self.ip, self.serial, str(e)) from None
+
+    @classmethod
+    def ip_addr(cls, ip: str) -> str:
+        """``ip`` as pylink's ``open()`` takes it: ``<host>:<port>``.
+
+        The library selects the probe with everything before the last colon,
+        so a tunnel (``tunnel:<name>``, as Commander's ``-IP`` takes it) is
+        ``tunnel:<name>:<port>``, as pylink's ``open_tunnel()`` builds it.
+        """
+        ip = str(ip)
+        colons = 2 if ip.lower().startswith("tunnel:") else 1
+        return ip if ip.count(":") >= colons else f"{ip}:{cls.DEFAULT_PORT}"
 
     def close(self) -> None:  # noqa: D102
         jl, self._jl = self._jl, None

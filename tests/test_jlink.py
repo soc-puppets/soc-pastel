@@ -206,11 +206,26 @@ def test_pylink_ip_and_jtag_chain(tmp_path, pylink):
     assert ("jtag_configure", 5, 1) in pylink.calls
 
 
-def test_pylink_cannot_use_a_tunnel(tmp_path, pylink):
+def test_pylink_tunnel(tmp_path, pylink):
     j = make(tmp_path, None, "pylink", ip="tunnel:board7")
-    with pytest.raises(ConfigurationError, match="tunnel.*--jlink-backend=commander"):
-        j.open()
+    j.open()
     j.close()
+    assert ("open", None, "tunnel:board7:19020") in pylink.calls
+
+
+@pytest.mark.parametrize(
+    "ip, addr",
+    [
+        ("10.0.0.7", "10.0.0.7:19020"),
+        ("10.0.0.7:19021", "10.0.0.7:19021"),
+        ("tunnel:601012345", "tunnel:601012345:19020"),
+        ("tunnel:board7:19021", "tunnel:board7:19021"),
+    ],
+)
+def test_pylink_ip_addr(ip, addr):
+    from soc_pastel.interfaces.on_chip_debug.jlink import JLinkPylink
+
+    assert JLinkPylink.ip_addr(ip) == addr
 
 
 def test_pylink_reset_pin(tmp_path, pylink):

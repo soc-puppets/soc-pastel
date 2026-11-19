@@ -561,10 +561,9 @@ The ``jlink`` driver talks to the probe in one of two ways, its *backend*:
 Both need SEGGER's J-Link software, plus ``pip install "soc-pastel[jlink]"``.
 They behave the same, so a binding can set ``"backend": "pylink"`` or leave the
 default, and ``--jlink-backend`` picks the other at run time. Pick a probe with
-``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP, or a SEGGER tunnel with
-``commander``). The probe software's output goes to ``jlink.log`` in the test's
-run directory. See :mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every
-option.
+``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP, or a SEGGER tunnel). The
+probe software's output goes to ``jlink.log`` in the test's run directory. See
+:mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every option.
 
 On hardware, firmware loads and RTT is read through the probe, so a code
 location's ``rtt`` region must be readable while the CPU runs. Tests that need
