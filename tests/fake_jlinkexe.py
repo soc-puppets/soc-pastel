@@ -15,6 +15,11 @@ state = {"halted": False, "pc": 0, "regs": {}, "bps": {}, "next_bp": 1}
 RESET_VECTOR = 0x8000_0000
 #: Register names as SEGGER's library gives them for RISC-V: no ABI names (A0, SP).
 KNOWN_REGISTERS = {"PC", "MSTATUS", "MEPC", "MCAUSE", *(f"X{i}" for i in range(32))}
+#: What the real Commander says to a name it doesn't know (seen on a board).
+ILLEGAL_REGISTER = (
+    "Halting CPU in order to read register...\nIllegal register name.\nSyntax: {}\n\n"
+    + ", ".join(sorted(KNOWN_REGISTERS))
+)
 
 
 def word(addr):
@@ -32,7 +37,7 @@ def reply(text=""):
 
 
 def handle(line):
-    parts = line.split()
+    parts = line.replace(",", " ").split()
     cmd, args = parts[0].lower(), parts[1:]
     num = lambda s: int(s, 16)  # noqa: E731 - Commander takes hex
     if cmd in ("device", "if", "speed", "jtagconf"):
@@ -64,11 +69,11 @@ def handle(line):
         name = args[0].upper()
         value = state["pc"] if name == "PC" else state["regs"].get(name, 0)
         if name not in KNOWN_REGISTERS:
-            return reply(f"****** Error: Register {args[0]} not found.")
+            return reply(ILLEGAL_REGISTER.format("rreg <RegName>"))
         return reply(f"{name} = 0x{value:08X}")
     if cmd == "wreg":
         if args[0].upper() not in KNOWN_REGISTERS:
-            return reply(f"****** Error: Register {args[0]} not found.")
+            return reply(ILLEGAL_REGISTER.format("wreg <RegName>, <Data>"))
         state["regs"][args[0].upper()] = num(args[1])
         return reply()
     if cmd == "mem32":

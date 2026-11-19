@@ -78,9 +78,12 @@ _KEYS = {
     "impl", "backend", "device", "interface", "speed", "ip", "serial", "jtag_conf",
     "reset_pin", "min_vtref", "timeout_s", "executable", "library",
 }  # fmt: skip
-#: Commander's error messages, e.g. ``****** Error: ...``, ``ERROR: ...`` or
+#: Commander's error messages, e.g. ``****** Error: ...``, ``ERROR: ...``,
+#: ``Illegal register name.`` (followed by ``Syntax: ...``) or
 #: ``Connecting to J-Link via USB...FAILED: Cannot connect to J-Link.``
-_ERROR = re.compile(r"^\s*(\*+\s*Error\b|ERROR\b|Could not)|\bFAILED:", re.I | re.M)
+_ERROR = re.compile(
+    r"^\s*(\*+\s*Error\b|ERROR\b|Could not|Illegal\b|Syntax\b)|\bFAILED:", re.I | re.M
+)
 T = TypeVar("T")
 
 
@@ -222,6 +225,9 @@ class JLinkCommander(JLinkBackend):
         self.executable = executable
         self._proc: Any = None
         self._log_file: Any = None
+        #: Commander rejected a RISC-V ABI name (it only knows X0-X31), so
+        #: translate them from now on rather than trying each first.
+        self._abi_as_x = False
 
     def start(self) -> None:
         """Start Commander and wait for its prompt."""
@@ -272,7 +278,10 @@ class JLinkCommander(JLinkBackend):
         self._proc.sendline(cmd)
         out = self._expect_prompt(cmd)
         if check and _ERROR.search(out):
-            raise TargetError(f"J-Link: {cmd!r} failed:\n{out.strip()}")
+            text = out.strip()
+            if len(text) > 600:  # e.g. the list of every register name after a bad one
+                text = text[:600] + " ... (all of it is in jlink.log)"
+            raise TargetError(f"J-Link: {cmd!r} failed:\n{text}")
         return out
 
     def _expect_prompt(self, what: str) -> str:
@@ -338,21 +347,33 @@ class JLinkCommander(JLinkBackend):
         self.command("setreset")
 
     def _by_name(self, name: str, op: Callable[[str], T]) -> T:
-        """``op(name)``; if Commander doesn't know a RISC-V ABI name (``a0``), ``op("X10")``."""
+        """``op(name)``; if Commander doesn't know a RISC-V ABI name (``a0``), ``op("X10")``.
+
+        Commander names RISC-V's integer registers X0-X31 only. Trying the
+        name first keeps other architectures' names (e.g. Arm's ``sp``) working.
+        """
+        number = gpr_number(name)
+        is_abi = number is not None and name.upper() != f"X{number}"
+        if is_abi and self._abi_as_x:
+            return op(f"X{number}")
         try:
             return op(name)
         except TargetError:
-            number = gpr_number(name)
-            if number is None or name.upper() == f"X{number}":
+            if not is_abi:
                 raise
-            return op(f"X{number}")
+            result = op(f"X{number}")
+            self._abi_as_x = True
+            return result
 
     def read_register(self, name: str) -> int:
         """Read a register (``rreg``)."""
 
         def rreg(reg: str) -> int:
             out = self.command(f"rreg {reg}")
-            match = re.search(rf"\b{re.escape(reg)}\s*=\s*(?:0x)?([0-9A-Fa-f]+)", out, re.I)
+            # The reply is "<NAME> = 0x...", on its own line (Commander may say
+            # it halted the CPU first).
+            pattern = rf"^\s*{re.escape(reg)}\s*=\s*(?:0x)?([0-9A-Fa-f]+)\s*$"
+            match = re.search(pattern, out, re.I | re.M)
             if not match:
                 raise TargetError(f"J-Link: cannot read register {reg} from:\n{out.strip()}")
             return int(match.group(1), 16)
@@ -364,7 +385,8 @@ class JLinkCommander(JLinkBackend):
         if name.lower() == "pc":
             self.command(f"setpc 0x{value:X}")
         else:
-            self._by_name(name, lambda reg: self.command(f"wreg {reg} 0x{value:X}"))
+            # Commander's syntax: "wreg <RegName>, <Data>".
+            self._by_name(name, lambda reg: self.command(f"wreg {reg}, 0x{value:X}"))
 
     def read_words(self, addr: int, count: int) -> bytes:  # noqa: D102
         if count > self.BULK_WORDS:

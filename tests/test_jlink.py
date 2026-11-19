@@ -97,8 +97,28 @@ def test_registers(ocd):
     assert ocd.read_register("s0") == ocd.read_register("x8") == 0x88
     ocd.write_register("mepc", 0x8000_0040)  # a CSR, by the library's name
     assert ocd.read_register("mepc") == 0x8000_0040
-    with pytest.raises(TargetError, match="not found"):
+    with pytest.raises(TargetError, match="Illegal register name|not found"):
         ocd.read_register("nonsense")
+
+
+def test_an_unknown_register_is_an_error(ocd):
+    ocd.halt()
+    with pytest.raises(TargetError, match="Illegal register name|not found"):
+        ocd.write_register("nonsense", 1)
+
+
+def test_commander_translates_abi_names_once_it_knows_it_must(tmp_path, jlinkexe):
+    pytest.importorskip("pexpect")
+    j = make(tmp_path, jlinkexe)
+    j.open()
+    j.halt()
+    j.write_register("a0", 0x1234)
+    j.write_register("a1", 0x5678)
+    assert j.read_register("a0") == 0x1234 and j.read_register("x11") == 0x5678
+    j.close()
+    log = (tmp_path / "jlink.log").read_text()
+    assert log.count("Illegal register name") == 1  # tried a0 once; X11, X10 after
+    assert "wreg X11, 0x5678" in log and "rreg X10" in log and "rreg a0" not in log
 
 
 def test_registers_need_a_halted_cpu(ocd):
