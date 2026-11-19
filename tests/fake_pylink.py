@@ -13,14 +13,14 @@ import threading
 import types
 
 RESET_VECTOR = 0x8000_0000
-#: RISC-V register names as the J-Link library gives them.
-REGISTER_NAMES = ["PC"] + [
-    f"X{i} ({abi.upper()})"
-    for i, abi in enumerate(
-        "zero ra sp gp tp t0 t1 t2 s0 s1 a0 a1 a2 a3 a4 a5 a6 a7 "
-        "s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 t3 t4 t5 t6".split()
-    )
-]
+#: Register names by index, laid out as SEGGER's library does for RISC-V (seen on
+#: a real board): CSRs at their CSR numbers ("R??" where unimplemented), X0-X31
+#: from 4096 and the PC at 4224. No ABI names (A0, SP, ...).
+REGISTER_NAMES = ["R??"] * 4225
+REGISTER_NAMES[0x300], REGISTER_NAMES[0x341], REGISTER_NAMES[0x342] = "MSTATUS", "MEPC", "MCAUSE"
+REGISTER_NAMES[4096 : 4096 + 32] = [f"X{i}" for i in range(32)]
+PC = 4224
+REGISTER_NAMES[PC] = "PC"
 
 
 def make_module() -> types.ModuleType:
@@ -67,6 +67,7 @@ def make_module() -> types.ModuleType:
             self.bps: dict[int, int] = {}
             self.next_bp = 1
             self.reset_pin = []
+            self._dll = Dll(self)
             pylink.instances.append(self)
 
         def _record(self, *call):
@@ -119,10 +120,10 @@ def make_module() -> types.ModuleType:
             return True
 
         def step(self, thumb=False):
-            self.regs[0] += 4
+            self.regs[PC] += 4
 
         def reset(self, ms=0, halt=True):
-            self.regs[0] = RESET_VECTOR
+            self.regs[PC] = RESET_VECTOR
             self.halted_ = halt
             return 0
 
@@ -133,7 +134,7 @@ def make_module() -> types.ModuleType:
             self.reset_pin.append(1)
 
         def register_list(self):
-            return list(range(len(REGISTER_NAMES)))
+            return list(range(256))  # pylink's limit (MAX_NUM_CPU_REGISTERS)
 
         def register_name(self, register_index):
             return REGISTER_NAMES[register_index]
@@ -149,6 +150,8 @@ def make_module() -> types.ModuleType:
             self._record("memory_read32", addr, num_words)
             if addr >= 0xF000_0000:
                 raise JLinkReadException("Could not read memory.")
+            if addr < 0x100:  # nothing there: the library reads nothing, and says nothing
+                return []
             return [self.mem.get(addr + 4 * i, 0) for i in range(num_words)]
 
         def memory_write32(self, addr, data, zone=None):
@@ -166,6 +169,22 @@ def make_module() -> types.ModuleType:
 
         def breakpoint_clear(self, handle):
             return self.bps.pop(handle, None) is not None
+
+    class Dll:
+        """The few library functions the backend calls directly."""
+
+        def __init__(self, jlink):
+            self.jlink = jlink
+
+        def JLINKARM_GetRegisterList(self, buf, size):
+            count = min(size, len(REGISTER_NAMES))
+            buf[:count] = list(range(count))
+            pylink.calls.append(("JLINKARM_GetRegisterList", size))
+            return count
+
+        def JLINKARM_Halt(self):
+            self.jlink.halted_ = True
+            return 0
 
     pylink.JLink = JLink
     return pylink

@@ -88,7 +88,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     probe.addoption(
         "--jlink-ip",
         metavar="ADDR",
-        help="J-Link to use, over IP or a SEGGER tunnel ('tunnel:<name>'); jlink driver.",
+        help="J-Link to use, over IP or a SEGGER tunnel "
+        "('tunnel:<name>[:<password>[:<server>[:<port>]]]'); jlink driver.",
     )
     probe.addoption(
         "--jlink-serial", metavar="SN", help="USB J-Link to use, by serial number; jlink driver."

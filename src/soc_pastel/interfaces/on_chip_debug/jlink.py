@@ -29,7 +29,8 @@ Binding config keys:
 - ``interface``: ``"JTAG"`` (default) or ``"SWD"``.
 - ``speed``: interface speed in kHz (default 4000).
 - ``ip``: connect to a J-Link over IP, e.g. ``"192.168.1.20"``, or through a
-  SEGGER tunnel, ``"tunnel:<name or serial>"``. ``serial``: pick a USB J-Link by
+  SEGGER tunnel, ``"tunnel:<name or serial>[:<password>[:<server>[:<port>]]]"``
+  (the password is masked in logs and messages). ``serial``: pick a USB J-Link by
   serial number. Neither: the only USB J-Link. Both can be given at run time
   with ``--jlink-ip`` and ``--jlink-serial``.
 - ``jtag_conf``: the JTAG chain position, ``"<IRPre> <DRPre>"`` (default
@@ -51,6 +52,7 @@ be chosen at run time; the one not in use is ignored.
 from __future__ import annotations
 
 import abc
+import ctypes
 import logging
 import os
 import re
@@ -65,6 +67,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 from soc_pastel.core.errors import ConfigurationError, PastelTimeout, TargetError
 from soc_pastel.core.memory import MemoryInterface, WordMemory
 from soc_pastel.core.on_chip_debug import OnChipDebug, TargetState
+from soc_pastel.core.riscv import ABI_NAMES, ALIASES, gpr_number
 
 if TYPE_CHECKING:
     from soc_pastel.core.harness import PlatformHarness
@@ -81,8 +84,19 @@ _ERROR = re.compile(r"^\s*(\*+\s*Error\b|ERROR\b|Could not)|\bFAILED:", re.I | r
 T = TypeVar("T")
 
 
+def _redact(ip: str) -> str:
+    """``ip`` for messages and logs: a tunnel's password replaced by ``***``.
+
+    A tunnel is ``tunnel:<name or serial>[:<password>[:<server>[:<port>]]]``.
+    """
+    fields = str(ip).split(":")
+    if fields[0].lower() == "tunnel" and len(fields) > 2 and fields[2]:
+        fields[2] = "***"
+    return ":".join(fields)
+
+
 def _no_probe(ip: str | None, serial: str | None, detail: str) -> TargetError:
-    where = f"at {ip}" if ip else f"with serial {serial}" if serial else "on USB"
+    where = f"at {_redact(ip)}" if ip else f"with serial {serial}" if serial else "on USB"
     return TargetError(
         f"can't reach a J-Link {where} (pick one with --jlink-serial or --jlink-ip):\n"
         f"{detail.strip()}"
@@ -323,20 +337,34 @@ class JLinkCommander(JLinkBackend):
         self.command("clrreset")
         self.command("setreset")
 
+    def _by_name(self, name: str, op: Callable[[str], T]) -> T:
+        """``op(name)``; if Commander doesn't know a RISC-V ABI name (``a0``), ``op("X10")``."""
+        try:
+            return op(name)
+        except TargetError:
+            number = gpr_number(name)
+            if number is None or name.upper() == f"X{number}":
+                raise
+            return op(f"X{number}")
+
     def read_register(self, name: str) -> int:
         """Read a register (``rreg``)."""
-        out = self.command(f"rreg {name}")
-        match = re.search(rf"\b{re.escape(name)}\s*=\s*(?:0x)?([0-9A-Fa-f]+)", out, re.I)
-        if not match:
-            raise TargetError(f"J-Link: cannot read register {name} from:\n{out.strip()}")
-        return int(match.group(1), 16)
+
+        def rreg(reg: str) -> int:
+            out = self.command(f"rreg {reg}")
+            match = re.search(rf"\b{re.escape(reg)}\s*=\s*(?:0x)?([0-9A-Fa-f]+)", out, re.I)
+            if not match:
+                raise TargetError(f"J-Link: cannot read register {reg} from:\n{out.strip()}")
+            return int(match.group(1), 16)
+
+        return self._by_name(name, rreg)
 
     def write_register(self, name: str, value: int) -> None:
         """Write a register (``setpc`` for the PC, as APE did; ``wreg`` otherwise)."""
         if name.lower() == "pc":
             self.command(f"setpc 0x{value:X}")
         else:
-            self.command(f"wreg {name} 0x{value:X}")
+            self._by_name(name, lambda reg: self.command(f"wreg {reg} 0x{value:X}"))
 
     def read_words(self, addr: int, count: int) -> bytes:  # noqa: D102
         if count > self.BULK_WORDS:
@@ -493,7 +521,8 @@ class JLinkPylink(JLinkBackend):
             ) from None
         ip_addr = self.ip_addr(self.ip) if self.ip else None
         serial = int(self.serial) if self.serial else None
-        self._log(f"> open(serial_no={serial}, ip_addr={ip_addr})")
+        shown = _redact(ip_addr) if ip_addr else None
+        self._log(f"> open(serial_no={serial}, ip_addr={shown})")
         jl = self._jl
         try:
             self._bounded("open()", lambda: jl.open(serial_no=serial, ip_addr=ip_addr))
@@ -502,15 +531,21 @@ class JLinkPylink(JLinkBackend):
 
     @classmethod
     def ip_addr(cls, ip: str) -> str:
-        """``ip`` as pylink's ``open()`` takes it: ``<host>:<port>``.
+        """``ip`` as pylink's ``open()`` takes it: ``<address>:<port>``.
 
-        The library selects the probe with everything before the last colon,
-        so a tunnel (``tunnel:<name>``, as Commander's ``-IP`` takes it) is
-        ``tunnel:<name>:<port>``, as pylink's ``open_tunnel()`` builds it.
+        pylink splits off the last field as the port, and hands the library
+        the rest. A tunnel, ``tunnel:<name or serial>[:<password>[:<server>
+        [:<port>]]]`` as Commander's ``-IP`` takes it, has its port only as a
+        fifth field, so anything shorter gets one added (as pylink's
+        ``open_tunnel()`` does).
         """
         ip = str(ip)
-        colons = 2 if ip.lower().startswith("tunnel:") else 1
-        return ip if ip.count(":") >= colons else f"{ip}:{cls.DEFAULT_PORT}"
+        fields = ip.split(":")
+        if fields[0].lower() == "tunnel":
+            has_port = len(fields) >= 5 and fields[4].isdigit()
+        else:
+            has_port = len(fields) == 2
+        return ip if has_port else f"{ip}:{cls.DEFAULT_PORT}"
 
     def close(self) -> None:  # noqa: D102
         jl, self._jl = self._jl, None
@@ -543,10 +578,31 @@ class JLinkPylink(JLinkBackend):
             lambda: self._call(f"connect({device}, speed={speed})", jl.connect, device, speed),
         )
         self._registers = {}
-        for index in self._call("register_list()", jl.register_list):
-            # Names such as "PC" or "X10 (A0)": each name and alias finds the register.
-            for alias in re.findall(r"[\w.]+", jl.register_name(index)):
-                self._registers.setdefault(alias.lower(), index)
+        for index in self._register_list():
+            name = jl.register_name(index)
+            if "?" not in name:  # "R??": an index the target doesn't implement
+                self._registers.setdefault(name.lower(), index)
+        # The library names RISC-V's integer registers X0-X31; add their ABI names.
+        for alias in (*ABI_NAMES, *ALIASES):
+            number = gpr_number(alias)
+            if f"x{number}" in self._registers:
+                self._registers.setdefault(alias, self._registers[f"x{number}"])
+
+    def _register_list(self) -> list[int]:
+        """Every register index the library has for the target.
+
+        pylink's ``register_list()`` fetches at most 256, but a RISC-V
+        target has thousands (the CSRs come first, by CSR number; X0-X31
+        are at 4096 and the PC after them), so ask the library directly.
+        """
+        get_list = self._link()._dll.JLINKARM_GetRegisterList
+        size = 256
+        while True:
+            buf = (ctypes.c_uint32 * size)()
+            count = self._call(f"JLINKARM_GetRegisterList({size})", get_list, buf, size)
+            if count < size or size >= 1 << 16:
+                return list(buf[:count])
+            size *= 4
 
     def vtref(self) -> float:  # noqa: D102
         status = self._call("hardware_status", lambda: self._link().hardware_status)
@@ -555,10 +611,12 @@ class JLinkPylink(JLinkBackend):
     def is_halted(self) -> bool:  # noqa: D102
         return bool(self._call("halted()", self._link().halted))
 
-    def halt(self) -> None:  # noqa: D102
-        self._call("halt()", self._link().halt)
+    def halt(self) -> None:
+        """Halt (``JLINKARM_Halt``, not pylink's ``halt()``, which then sleeps for 1 s)."""
+        self._call("JLINKARM_Halt()", self._link()._dll.JLINKARM_Halt)
 
-    def go(self) -> None:  # noqa: D102
+    def go(self) -> None:
+        """Let the CPU run (``restart()``, which does nothing if it is already running)."""
         self._call("restart()", self._link().restart)
 
     def step(self) -> None:  # noqa: D102
@@ -577,9 +635,11 @@ class JLinkPylink(JLinkBackend):
         try:
             return self._registers[name.lower()]
         except KeyError:
-            known = ", ".join(sorted(self._registers)) or "none"
+            known = sorted(self._registers)
+            sample = ", ".join(known[:20]) + (", ..." if len(known) > 20 else "")
             raise TargetError(
-                f"J-Link: register {name} not found (the library knows {known})"
+                f"J-Link: register {name} not found (the library knows {len(known)}: "
+                f"{sample or 'none'})"
             ) from None
 
     def read_register(self, name: str) -> int:  # noqa: D102
@@ -594,6 +654,11 @@ class JLinkPylink(JLinkBackend):
         words = self._call(
             f"memory_read32({addr:#x}, {count})", self._link().memory_read32, addr, count
         )
+        if len(words) != count:  # the library read less, without saying why
+            raise TargetError(
+                f"J-Link: could only read {len(words)} of {count} words at {addr:#x}: "
+                "is there memory there?"
+            )
         return struct.pack(f"<{count}I", *words)
 
     def write_words(self, addr: int, data: bytes) -> None:  # noqa: D102
@@ -748,7 +813,7 @@ class JLink(OnChipDebug):
         with self._lock:
             jl = self._backend()
             if pc is not None:
-                jl.write_register("pc", pc)
+                self._halted_for("setting the PC").write_register("pc", pc)
             jl.go()
 
     def step(self) -> None:  # noqa: D102
@@ -760,13 +825,21 @@ class JLink(OnChipDebug):
             halted = self._backend().is_halted()
         return TargetState.HALTED if halted else TargetState.RUNNING
 
+    def _halted_for(self, what: str) -> JLinkBackend:
+        jl = self._backend()
+        if not jl.is_halted():
+            # RISC-V debug reaches registers only while halted, and the library
+            # doesn't report the failure: it hands back a value regardless.
+            raise TargetError(f"J-Link: halt the CPU before {what}")
+        return jl
+
     def read_register(self, name: str) -> int:  # noqa: D102
         with self._lock:
-            return self._backend().read_register(name)
+            return self._halted_for(f"reading {name}").read_register(name)
 
     def write_register(self, name: str, value: int) -> None:  # noqa: D102
         with self._lock:
-            self._backend().write_register(name, value)
+            self._halted_for(f"writing {name}").write_register(name, value)
 
     @property
     def memory(self) -> MemoryInterface:  # noqa: D102

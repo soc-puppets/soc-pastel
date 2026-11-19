@@ -89,10 +89,34 @@ def test_reset_halts_and_resume_sets_the_pc(ocd):
 
 
 def test_registers(ocd):
-    ocd.write_register("a0", 0x1234)
+    ocd.halt()
+    ocd.write_register("a0", 0x1234)  # an ABI name: the library only knows X10
     assert ocd.read_register("a0") == 0x1234
+    assert ocd.read_register("x10") == ocd.read_register("X10") == 0x1234
+    ocd.write_register("fp", 0x88)
+    assert ocd.read_register("s0") == ocd.read_register("x8") == 0x88
+    ocd.write_register("mepc", 0x8000_0040)  # a CSR, by the library's name
+    assert ocd.read_register("mepc") == 0x8000_0040
     with pytest.raises(TargetError, match="not found"):
         ocd.read_register("nonsense")
+
+
+def test_registers_need_a_halted_cpu(ocd):
+    ocd.reset(halt=False)
+    with pytest.raises(TargetError, match="halt the CPU before reading a0"):
+        ocd.read_register("a0")
+    with pytest.raises(TargetError, match="halt the CPU before setting the PC"):
+        ocd.resume(0x8000_0100)
+    ocd.resume()  # already running: nothing to do
+    assert ocd.state() is TargetState.RUNNING
+
+
+def test_riscv_register_names():
+    from soc_pastel.core.riscv import ABI_NAMES, gpr_number
+
+    assert len(ABI_NAMES) == 32 and gpr_number("zero") == 0 and gpr_number("t6") == 31
+    assert gpr_number("A0") == gpr_number("x10") == 10 and gpr_number("fp") == 8
+    assert gpr_number("x32") is None and gpr_number("mepc") is None and gpr_number("pc") is None
 
 
 def test_memory_small_bulk_and_unaligned(ocd):
@@ -219,7 +243,12 @@ def test_pylink_tunnel(tmp_path, pylink):
         ("10.0.0.7", "10.0.0.7:19020"),
         ("10.0.0.7:19021", "10.0.0.7:19021"),
         ("tunnel:601012345", "tunnel:601012345:19020"),
-        ("tunnel:board7:19021", "tunnel:board7:19021"),
+        ("tunnel:board7:secret", "tunnel:board7:secret:19020"),
+        ("tunnel:board7:secret:jlink.example.com", "tunnel:board7:secret:jlink.example.com:19020"),
+        (
+            "tunnel:board7:secret:jlink.example.com:19021",
+            "tunnel:board7:secret:jlink.example.com:19021",
+        ),
     ],
 )
 def test_pylink_ip_addr(ip, addr):
@@ -271,4 +300,34 @@ def test_pylink_not_installed_is_explained(tmp_path, monkeypatch):
     j = make(tmp_path, None, "pylink")
     with pytest.raises(ConfigurationError, match="pylink-square"):
         j.open()
+    j.close()
+
+
+def test_tunnel_password_is_not_shown(tmp_path, pylink, monkeypatch):
+    monkeypatch.setenv("FAKE_JLINK_NO_PROBE", "1")
+    j = make(tmp_path, None, "pylink", ip="tunnel:board7:secret:jlink.example.com")
+    with pytest.raises(TargetError) as failure:
+        j.open()
+    j.close()
+    assert ("open", None, "tunnel:board7:secret:jlink.example.com:19020") in pylink.calls
+    message, log = str(failure.value), (tmp_path / "jlink.log").read_text()
+    assert "tunnel:board7:***:jlink.example.com" in message and "secret" not in message
+    assert "tunnel:board7:***:jlink.example.com:19020" in log and "secret" not in log
+
+
+def test_pylink_finds_registers_beyond_its_own_limit(tmp_path, pylink):
+    j = make(tmp_path, None, "pylink")
+    j.open()
+    j.halt()
+    assert j.read_register("pc") == 0  # index 4224: past pylink's 256
+    j.close()
+    sizes = [c[1] for c in pylink.calls if c[0] == "JLINKARM_GetRegisterList"]
+    assert sizes == [256, 1024, 4096, 16384]
+
+
+def test_pylink_short_read_is_an_error(tmp_path, pylink):
+    j = make(tmp_path, None, "pylink")
+    j.open()
+    with pytest.raises(TargetError, match="only read 0 of 1 words at 0x0: is there memory"):
+        j.memory.read32(0)
     j.close()

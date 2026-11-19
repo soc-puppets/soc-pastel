@@ -13,6 +13,8 @@ PROMPT = "J-Link>"
 mem: dict[int, int] = {}  # byte address -> byte
 state = {"halted": False, "pc": 0, "regs": {}, "bps": {}, "next_bp": 1}
 RESET_VECTOR = 0x8000_0000
+#: Register names as SEGGER's library gives them for RISC-V: no ABI names (A0, SP).
+KNOWN_REGISTERS = {"PC", "MSTATUS", "MEPC", "MCAUSE", *(f"X{i}" for i in range(32))}
 
 
 def word(addr):
@@ -60,11 +62,13 @@ def handle(line):
         return reply()
     if cmd == "rreg":
         name = args[0].upper()
-        value = state["pc"] if name == "PC" else state["regs"].get(name)
-        if value is None:
+        value = state["pc"] if name == "PC" else state["regs"].get(name, 0)
+        if name not in KNOWN_REGISTERS:
             return reply(f"****** Error: Register {args[0]} not found.")
         return reply(f"{name} = 0x{value:08X}")
     if cmd == "wreg":
+        if args[0].upper() not in KNOWN_REGISTERS:
+            return reply(f"****** Error: Register {args[0]} not found.")
         state["regs"][args[0].upper()] = num(args[1])
         return reply()
     if cmd == "mem32":
