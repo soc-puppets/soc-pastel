@@ -9,7 +9,7 @@ description = "PASTEL device pack for the VeeRwolf reference SoC (VeeR EL2)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["soc-pastel==0.1.0.dev0"]
+dependencies = ["soc-pastel"]  # the PASTEL in this repository; not published
 
 [project.urls]
 Homepage = "https://github.com/soc-puppets/soc-pastel"
