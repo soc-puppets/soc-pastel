@@ -11,6 +11,7 @@ The harness exposes it as ``harness.ocd``.
 
 from __future__ import annotations
 
+import time
 from abc import abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -169,6 +170,24 @@ class OnChipDebug(Interface):
     def pc(self) -> int:
         """The program counter. The CPU must be halted."""
         return self.read_register("pc")
+
+    def wait_halted(self, timeout_s: float | None = None, poll_s: float = 0.02) -> int:
+        """Wait until the CPU halts (at a breakpoint, say); return the PC.
+
+        Gives up with :class:`~soc_pastel.core.errors.PastelTimeout` after
+        ``timeout_s`` (if given), or when the test times out.
+        """
+        from .errors import PastelTimeout
+
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
+        watchdog = getattr(self.harness, "timeout", None)
+        while self.state() is not TargetState.HALTED:
+            if watchdog is not None:
+                watchdog.check()
+            if deadline is not None and time.monotonic() > deadline:
+                raise PastelTimeout(f"the CPU did not halt within {timeout_s:g} s")
+            time.sleep(poll_s)
+        return self.pc
 
     @contextmanager
     def halted(self) -> Iterator[None]:

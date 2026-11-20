@@ -235,9 +235,11 @@ def pytest_runtest_call(item: pytest.Item):
     __tracebackhide__ = True
     try:
         result = yield
+        _finish_firmware(item)  # a run the test left going may have failed meanwhile
     except KeyboardInterrupt:
         raise
     except BaseException as e:
+        _finish_firmware(item, quietly=True)
         timed_out = _timed_out(item)
         _finish_simulation(item, test_failed=True)
         if timed_out:
@@ -264,6 +266,13 @@ def _test_frames(item: pytest.Item, error: BaseException) -> TracebackType | Non
     if last_in_test is not None:
         last_in_test.tb_next = None
     return tb
+
+
+def _finish_firmware(item: pytest.Item, *, quietly: bool = False) -> None:
+    __tracebackhide__ = True
+    fw = getattr(item, "funcargs", {}).get("firmware")
+    if isinstance(fw, Firmware):
+        fw._finish_runs(quietly=quietly)
 
 
 def _timed_out(item: pytest.Item) -> str | None:
@@ -389,6 +398,7 @@ class Firmware:
         from .fw.runner import HostLink
 
         self._link = HostLink()
+        self._runs: list = []  # FirmwareRuns from start(), closed when the test ends
 
     def send(self, data: bytes) -> None:
         """Send up to 255 bytes to the running firmware (``pastel_receive()``).
@@ -488,22 +498,77 @@ class Firmware:
             link=self._link,
             **kwargs,
         )
-        from .fw.runner import FirmwareFailed
+        from .fw.runner import check_result
 
-        if expect_fault:
-            if result.fault is None:
-                raise FirmwareFailed(result, "expected a fault, but the firmware finished")
-        elif expect_pass and not result.passed:
-            raise FirmwareFailed(result)
+        check_result(result, expect_pass=expect_pass, expect_fault=expect_fault)
         return result
+
+    def start(
+        self,
+        *sources: str | Path,
+        include_dirs: Iterable[str | Path] = (),
+        defines: Iterable[str] = (),
+        stack_size: int | None = None,
+        chip_ms: float | None = None,
+        timeout_s: float | None = None,
+        expect_pass: bool = True,
+        expect_fault: bool = False,
+    ):
+        """Build, load and start firmware; return its run at once.
+
+        Returns a :class:`~soc_pastel.fw.runner.FirmwareRun`. For tests that
+        act while the firmware runs, or firmware that never finishes. The run's
+        methods keep the test in step with the firmware:
+        ``wait_checkpoint``, ``at_checkpoint``, ``release``, ``send``, and
+        ``wait()`` (to the end, failing as :meth:`run` would) or ``stop()``.
+        A waiting checkpoint holds the firmware until the test releases it.
+
+        The firmware's output, errors and faults are reported while it runs.
+        A run the test neither waits for nor stops is stopped when the test
+        ends, and a fault or error it reported still fails the test.
+        """
+        from .fw.runner import FirmwareRun
+
+        build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
+        elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
+        run = FirmwareRun(
+            self.harness,
+            elf,
+            chip_ms=chip_ms,
+            timeout_s=timeout_s,
+            expect_fault=expect_fault,
+            expect_errors=not expect_pass,
+            link=self._link,
+            check=True,
+        )
+        run._start_background()
+        self._runs.append(run)
+        return run
+
+    def _finish_runs(self, *, quietly: bool = False) -> None:
+        """Stop runs the test left going; unless ``quietly``, raise what went wrong in them."""
+        __tracebackhide__ = True
+        runs, self._runs = self._runs, []
+        for run in runs:
+            if run._closed:  # waited for or stopped: already reported
+                continue
+            try:
+                run.stop()
+            except Exception:
+                if not quietly:
+                    raise
 
 
 @pytest.fixture
-def firmware(request: pytest.FixtureRequest, harness: PlatformHarness, tmp_path: Path) -> Firmware:
+def firmware(
+    request: pytest.FixtureRequest, harness: PlatformHarness, tmp_path: Path
+) -> Iterator[Firmware]:
     """Build and run firmware on the harness, at the selected code location.
 
     Firmware is built from scratch, into the test's run directory (``fw/``),
     whenever the test builds or runs it: always before the simulator starts.
     """
     location = _option(request.config, "code_location") or harness.variant.code_locations[0].name
-    return Firmware(harness, Path(request.path).parent, tmp_path / "fw", location)
+    fw = Firmware(harness, Path(request.path).parent, tmp_path / "fw", location)
+    yield fw
+    fw._finish_runs(quietly=True)  # normally done already, as part of the test

@@ -291,6 +291,75 @@ Things to know:
 - Firmware time keeps passing in the simulation while the test acts, except
   inside ``harness.ocd.halted()``.
 
+Acting while the firmware runs: ``firmware.start()``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``firmware.run()`` waits until the firmware finishes, and the test acts only in
+``on_checkpoint``. Most tests fit that. A few don't:
+
+- firmware that never finishes, such as a main loop to stop at breakpoints;
+- a test that keeps acting while the firmware runs, such as driving a pin the
+  firmware is measuring;
+- a test with several steps that reads better as one sequence than as a
+  callback keyed on checkpoint ids.
+
+``firmware.start()`` builds, loads and starts the firmware, and returns at once
+with a :py:class:`~soc_pastel.fw.runner.FirmwareRun`. The firmware's output,
+errors and faults are still reported as it runs, and the time limit still
+applies, while the test carries on and keeps in step with these:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Call
+     - Does
+   * - ``run.wait_checkpoint(id)``
+     - Wait until the firmware reports checkpoint ``id``. Each call takes one
+       report, so a repeated id is waited for again
+   * - ``with run.at_checkpoint(id):``
+     - Wait for it; if it waits, the firmware is held until the block ends
+   * - ``run.release(id)``
+     - Let the firmware go on from waiting checkpoint ``id``
+   * - ``run.send(data)``, ``run.send_u32(v)``
+     - Send data, as ``firmware.send()`` does
+   * - ``run.wait()``
+     - Let the firmware run to the end, releasing every checkpoint; return its
+       result, failing as ``firmware.run()`` would
+   * - ``run.stop()``
+     - Stop following firmware that won't finish by itself; return what it
+       produced so far
+   * - ``harness.ocd.wait_halted()``
+     - Wait until the CPU halts, e.g. at a breakpoint; return the PC
+
+.. code-block:: python
+
+   def test_counts_edges(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+       run = firmware.start("fw/count_edges.c")
+       run.wait_checkpoint(1)               # the firmware has started counting
+       for _ in range(200):
+           gpio.drive(PIN, PIN)
+           gpio.release(PIN)
+       result = run.wait()
+       assert result.data == [(200).to_bytes(4, "little")]
+
+.. code-block:: python
+
+   def test_stops_at_a_breakpoint(harness, firmware):
+       ocd = harness.ocd
+       run = firmware.start("fw/main_loop.c")
+       with run.at_checkpoint(1), ocd.halted():  # breakpoints need a halted CPU
+           ocd.add_breakpoint(firmware.symbol("handle_event"))
+       assert ocd.wait_halted() == firmware.symbol("handle_event")
+       run.stop()
+
+A waiting checkpoint holds the firmware until the test lets it go. Waiting for
+something else meanwhile waits until the time limit, and PASTEL warns when it
+sees that happening. A run the test neither waits for nor stops is stopped when
+the test ends, and a fault or error it reported still fails the test.
+``on_checkpoint`` belongs to ``firmware.run()`` only; with ``start()``, act in
+the test itself.
+
 Build options
 ~~~~~~~~~~~~~
 
@@ -385,8 +454,9 @@ marker, where ``chip_ms=None`` means no limit:
 when the firmware starts. ``timeout_s=`` adds a plain wall-clock limit.
 ``--pastel-no-timeout`` turns time limits off, for debugging interactively.
 
-Only waits PASTEL does itself notice a timeout straight away. A test that loops
-in its own Python finds out when it next touches the target.
+Only waits PASTEL does itself (``firmware.run()``, a started run's waits,
+``ocd.wait_halted()``) notice a timeout straight away. A test that loops in its
+own Python finds out when it next touches the target.
 
 .. _waves:
 

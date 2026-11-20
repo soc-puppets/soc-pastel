@@ -2,6 +2,7 @@
 
 import pytest
 
+from soc_pastel.core import TargetError
 from soc_pastel.core.loader import elf_symbol, memory_for
 from soc_pastel.fw.runner import FirmwareFailed, FirmwareFault
 
@@ -90,3 +91,32 @@ def test_host_sends_data_to_firmware(firmware):
 
     result = firmware.run("fw/receive.c", on_checkpoint=on_checkpoint)
     assert result.data == [bytes([sum(big) & 0xFF])]
+
+
+def test_started_firmware_runs_while_the_test_acts(firmware):
+    run = firmware.start("fw/started.c")
+    with run.at_checkpoint(1):  # the firmware is held until the block ends
+        run.send_u32(6)
+    run.wait_checkpoint(3)
+    run.wait_checkpoint(3)
+    run.wait_checkpoint(2)
+    firmware.send_u32(7)  # the fixture's send() reaches a started run too
+    result = run.wait()
+    assert result.passed and result.data == [(42).to_bytes(4, "little")]
+    assert "6 x 7 = 42" in result.output
+    assert result.checkpoints == [1, 3, 3, 2]
+
+
+def test_started_firmware_that_finishes_first(firmware):
+    run = firmware.start("fw/fail.c", expect_pass=False)  # no checkpoints: returns 7
+    with pytest.raises(TargetError, match="finished before checkpoint 99"):
+        run.wait_checkpoint(99)
+    assert run.wait().result == 7
+
+
+def test_started_firmware_fault(firmware):
+    run = firmware.start("fw/fault.c", expect_fault=True)
+    assert run.wait().fault.cause == 2
+    run = firmware.start("fw/fault.c")
+    with pytest.raises(FirmwareFault):
+        run.wait()

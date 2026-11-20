@@ -8,13 +8,6 @@ Each case runs a small test suite in its own pytest, as a user would, and
 checks that it fails promptly with PASTEL's timeout message.
 """
 
-import subprocess
-import sys
-import textwrap
-import time
-
-import pytest
-
 SPIN = """
 #include "pastel/pastel.h"
 
@@ -25,34 +18,6 @@ int test_main(void) {
 """
 
 
-@pytest.fixture
-def run_suite(request, tmp_path):
-    """Run a test file under pytest with this run's device and platform."""
-    config = request.config
-    if config.getoption("platform") is None:
-        pytest.skip("needs a simulation run (--device=veerwolf --platform=...)")
-    (tmp_path / "spin.c").write_text(SPIN)
-
-    def run(source: str) -> tuple[str, float]:
-        (tmp_path / "test_suite.py").write_text(textwrap.dedent(source))
-        args = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q"]
-        for option in ("device", "platform", "code_location", "sim_launcher"):
-            value = config.getoption(option)
-            if value:
-                args.append(f"--{option.replace('_', '-')}={value}")
-        began = time.monotonic()
-        result = subprocess.run(
-            [*args, str(tmp_path / "test_suite.py")],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-            timeout=900,
-        )
-        return result.stdout + result.stderr, time.monotonic() - began
-
-    return run
-
-
 def test_firmware_that_never_finishes_times_out(run_suite):
     out, took = run_suite(
         """
@@ -61,7 +26,8 @@ def test_firmware_that_never_finishes_times_out(run_suite):
         @pytest.mark.pastel_timeout(grace_s=1)
         def test_spin(firmware):
             firmware.run("spin.c", chip_ms=0.5)
-        """
+        """,
+        files={"spin.c": SPIN},
     )
     assert "1 failed" in out, out
     assert "PastelTimeout: timed out: the test took more than 0.5 ms of chip time" in out, out
