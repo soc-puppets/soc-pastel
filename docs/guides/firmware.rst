@@ -43,6 +43,12 @@ The API
        1 if waves are being dumped (see :ref:`waves`)
    * - ``pastel_send(data, len)``
      - Send up to 255 bytes to the host test
+   * - ``pastel_receive(buf, capacity)``
+     - Wait for data the host test sends (``firmware.send()``); returns its
+       length. Data sent while the firmware waits at a checkpoint is kept, up to
+       ``PASTEL_HOST_DATA_QUEUE`` bytes (default 512), until it asks
+   * - ``pastel_receive_u32()``
+     - Wait for a 32-bit value the host sends (``firmware.send_u32()``)
    * - ``pastel_finish(result)``
      - End the test now with ``result`` (what returning from ``test_main`` does)
    * - ``pastel_read32(addr)``, ``pastel_write32(addr, v)``

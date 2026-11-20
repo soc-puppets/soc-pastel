@@ -76,3 +76,17 @@ def test_host_and_firmware_share_memory(firmware):
     from soc_pastel.fw.runner import run_firmware
 
     assert run_firmware(harness, elf, on_checkpoint=on_checkpoint).passed
+
+
+def test_host_sends_data_to_firmware(firmware):
+    big = bytes((i * 7) & 0xFF for i in range(255))
+
+    def on_checkpoint(cp):
+        if cp == 1:  # the firmware is waiting: it keeps these until it asks
+            firmware.send_u32(0xC0FFEE55)
+            firmware.send(b"hello")
+        elif cp == 2:  # it is already waiting in pastel_receive
+            firmware.send(big)
+
+    result = firmware.run("fw/receive.c", on_checkpoint=on_checkpoint)
+    assert result.data == [bytes([sum(big) & 0xFF])]

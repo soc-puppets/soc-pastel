@@ -259,6 +259,29 @@ next one, through two firmware variables:
            if cp <= 3:
                mem.write32(firmware.symbol("command"), cp + 10)
 
+**5. Sending the firmware data.** ``firmware.send(data)`` (up to 255 bytes)
+and ``firmware.send_u32(value)``, called from ``on_checkpoint``, send data the
+firmware takes with ``pastel_receive()`` and ``pastel_receive_u32()``. It needs
+no firmware variables, and works where the firmware isn't halted for debug
+access:
+
+.. code-block:: c
+
+   int test_main(void) {
+     pastel_checkpoint(1, 1);                 // the test sends its parameters
+     uint32_t n_samples = pastel_receive_u32();
+     ...
+   }
+
+.. code-block:: python
+
+   def on_checkpoint(cp):
+       if cp == 1:
+           firmware.send_u32(16)
+
+Data sent while the firmware waits at a checkpoint is kept until it asks for
+it, and messages arrive in the order sent.
+
 Things to know:
 
 - Ids are yours to choose, and may repeat. A marker and a waiting checkpoint

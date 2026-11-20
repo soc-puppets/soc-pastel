@@ -290,6 +290,20 @@ class Firmware:
         self.location = harness.variant.code_location(location)
         #: The ELF most recently built, by :meth:`build` or :meth:`run`.
         self.elf: Path | None = None
+        from .fw.runner import HostLink
+
+        self._link = HostLink()
+
+    def send(self, data: bytes) -> None:
+        """Send up to 255 bytes to the running firmware (``pastel_receive()``).
+
+        Call it from ``on_checkpoint``, while the firmware runs.
+        """
+        self._link.send(data)
+
+    def send_u32(self, value: int) -> None:
+        """Send a 32-bit value to the running firmware (``pastel_receive_u32()``)."""
+        self._link.send_u32(value)
 
     def symbol(self, name: str) -> int:
         """The address of ``name`` in the firmware most recently built.
@@ -370,6 +384,7 @@ class Firmware:
             timeout_s=timeout_s,
             expect_fault=expect_fault,
             expect_errors=not expect_pass,
+            link=self._link,
             **kwargs,
         )
         from .fw.runner import FirmwareFailed

@@ -54,6 +54,19 @@ void pastel_check_failed(int fatal, const char *file, int line, const char *expr
 // Send opaque data to the host test (PASTEL_MBOX_DATA).
 void pastel_send(const void *data, uint8_t length);
 
+// Wait for data the host test sends (firmware.send()), and copy up to
+// `capacity` bytes of it into buf. Returns the length the host sent, which
+// may be more than `capacity` (the rest is dropped). Messages arrive in the
+// order sent; ones that arrive while the firmware waits at a checkpoint are
+// kept (up to PASTEL_HOST_DATA_QUEUE bytes in all) until it asks for them.
+int pastel_receive(void *buf, uint8_t capacity);
+// Wait for a 32-bit value the host sends (firmware.send_u32()).
+uint32_t pastel_receive_u32(void);
+
+#ifndef PASTEL_HOST_DATA_QUEUE
+#define PASTEL_HOST_DATA_QUEUE 512u
+#endif
+
 // Turn waveform dumping on (nonzero) or off (0), and wait until the platform
 // has done so. Returns 1 if waves are now being dumped: always 0 on a platform
 // that cannot dump waves or was not asked to (pytest --waves), and always 1 on

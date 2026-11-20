@@ -41,6 +41,30 @@ class Mbox(IntEnum):
     HOST_WAVES = 0x83
 
 
+class HostLink:
+    """Sends data to running firmware, which takes it with ``pastel_receive()``.
+
+    :func:`run_firmware` connects it while the firmware runs; the ``firmware``
+    fixture's :meth:`send` and :meth:`send_u32` use one. Data is sent at
+    once, so it is waiting when the firmware next asks.
+    """
+
+    def __init__(self) -> None:
+        self._send: Callable[[Mbox, bytes], None] | None = None
+
+    def send(self, data: bytes) -> None:
+        """Send up to 255 bytes, as one message."""
+        if len(data) > 255:
+            raise ValueError(f"host data is at most 255 bytes per message, not {len(data)}")
+        if self._send is None:
+            raise TargetError("no firmware is running: send data from on_checkpoint, while it runs")
+        self._send(Mbox.HOST_DATA, bytes(data))
+
+    def send_u32(self, value: int) -> None:
+        """Send a 32-bit value (``pastel_receive_u32()``)."""
+        self.send(struct.pack("<I", value & 0xFFFF_FFFF))
+
+
 @dataclass
 class FirmwareResult:
     """What a firmware run produced.
@@ -114,6 +138,7 @@ def run_firmware(
     poll_s: float = 0.005,
     expect_fault: bool = False,
     expect_errors: bool = False,
+    link: HostLink | None = None,
 ) -> FirmwareResult:
     """Reset the target, load and run ``elf``, and wait for it to finish.
 
@@ -126,6 +151,9 @@ def run_firmware(
     :attr:`FirmwareResult.fault` instead of raised. With ``expect_errors``,
     errors the firmware reports are logged at :data:`XERROR` rather than
     ERROR. Either way the result says what happened.
+
+    ``link``, if given, is connected while the firmware runs, so
+    ``on_checkpoint`` can send it data.
 
     Raises:
         FirmwareFault: The firmware took an exception, and ``expect_fault`` wasn't set.
@@ -141,14 +169,40 @@ def run_firmware(
 
     deadline = time.monotonic() + timeout_s
     rtt.wait_ready(timeout_s)
-    result = FirmwareResult(result=-1)
-    text, line, mbox = [], bytearray(), bytearray()
 
     def send(mid: Mbox, payload: bytes) -> None:
         msg = bytes([mid, len(payload)]) + payload
         while msg:
             msg = msg[rtt.write_down(MAILBOX_CHANNEL, msg) :]
+            if msg:  # the buffer is full: wait for the firmware to read it
+                if time.monotonic() > deadline:
+                    raise PastelTimeout("the firmware stopped taking data from the host")
+                time.sleep(poll_s)
 
+    if link is not None:
+        link._send = send
+    try:
+        return _poll(harness, rtt, send, deadline, timeout_s, on_checkpoint, poll_s,
+                     expect_fault, expect_errors)  # fmt: skip
+    finally:
+        if link is not None:
+            link._send = None
+
+
+def _poll(
+    harness: PlatformHarness,
+    rtt: Rtt,
+    send: Callable[[Mbox, bytes], None],
+    deadline: float,
+    timeout_s: float,
+    on_checkpoint: Callable[[int], None] | None,
+    poll_s: float,
+    expect_fault: bool,
+    expect_errors: bool,
+) -> FirmwareResult:
+    """Read the firmware's output and mailbox until it finishes."""
+    result = FirmwareResult(result=-1)
+    text, line, mbox = [], bytearray(), bytearray()
     while True:
         chunk = rtt.read_up(TEXT_CHANNEL)
         if chunk:
