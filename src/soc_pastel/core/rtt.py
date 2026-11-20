@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import struct
 import time
+from collections.abc import Callable
 
 from .errors import PastelTimeout, TargetError
 from .memory import MemoryInterface
@@ -26,12 +27,20 @@ class Rtt:
         self.address = address
         self.max_up = self.max_down = 0
 
-    def wait_ready(self, timeout_s: float) -> None:
-        """Wait until the firmware has initialised the control block."""
-        deadline = time.monotonic() + timeout_s
+    def wait_ready(
+        self, timeout_s: float | None = None, check: Callable[[], None] | None = None
+    ) -> None:
+        """Wait until the firmware has initialised the control block.
+
+        Gives up after ``timeout_s`` (if given); ``check`` is called while
+        waiting, and may raise to give up sooner.
+        """
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
         while self.memory.read(self.address, len(_ID)) != _ID:
-            if time.monotonic() > deadline:
+            if deadline is not None and time.monotonic() > deadline:
                 raise PastelTimeout("RTT control block was not initialised in time")
+            if check is not None:
+                check()
             time.sleep(0.01)
         self.max_up, self.max_down = struct.unpack("<ii", self.memory.read(self.address + 16, 8))
 

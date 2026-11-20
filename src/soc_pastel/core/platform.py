@@ -145,10 +145,6 @@ class Platform(ABC):
         """Platform time in nanoseconds, or None if only wall-clock time exists."""
         return None
 
-    #: Rough ratio of wall-clock time to target time, used to scale timeouts
-    #: on platforms that do not report their own time. 1.0 for hardware.
-    speed_factor: float = 1.0
-
     def backdoor(self) -> MemoryInterface | None:
         """Backdoor memory access, or None if the platform has none."""
         return None

@@ -205,6 +205,23 @@ its kind (``sim``, ``fpga``, ``silicon``), then falls back to ``default_variant`
 ``--variant`` overrides it. A variant can serve several kinds, e.g.
 ``platforms={"sim", "silicon"}`` when simulation runs the ASIC's memory map.
 
+Clocks
+~~~~~~
+
+Tests' time limits are in chip time (see :ref:`timeouts`). Give the chip's own
+clock on the device, and the clock of any build that runs slower, in MHz;
+fractions are fine:
+
+.. code-block:: python
+
+   MY_CHIP = Device(name="my_chip", clock_mhz=1000, ...)       # the ASIC: 1 GHz
+   FPGA = Variant(name="fpga", platforms={"fpga"}, clock_mhz=12.5, ...)
+
+An FPGA build at 12.5 MHz of a 1 GHz chip then gets 80 times as long as the
+chip would. A variant without ``clock_mhz`` runs at the chip's speed. Give the
+simulation variant one too if the testbench clocks the design slower than the
+chip runs.
+
 Interfaces: on-chip debug
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -133,7 +133,8 @@ def run_firmware(
     harness: PlatformHarness,
     elf: Path,
     *,
-    timeout_s: float = 300.0,
+    chip_ms: float | None = None,
+    timeout_s: float | None = None,
     on_checkpoint: Callable[[int], None] | None = None,
     poll_s: float = 0.005,
     expect_fault: bool = False,
@@ -155,9 +156,15 @@ def run_firmware(
     ``link``, if given, is connected while the firmware runs, so
     ``on_checkpoint`` can send it data.
 
+    Time limits: the test's own (:attr:`harness.timeout
+    <soc_pastel.core.harness.PlatformHarness.timeout>`) apply throughout.
+    ``chip_ms`` starts a new budget of that much chip time when the firmware
+    starts. ``timeout_s`` adds a plain wall-clock limit.
+
     Raises:
         FirmwareFault: The firmware took an exception, and ``expect_fault`` wasn't set.
-        PastelTimeout: It did not finish within ``timeout_s`` wall-clock seconds.
+        PastelTimeout: The test timed out, or the firmware did not finish within
+            ``timeout_s``.
     """
     ocd = harness.ocd
     ocd.reset(halt=True)
@@ -165,24 +172,32 @@ def run_firmware(
     cb = elf_symbol(elf, "_SEGGER_RTT")
     rtt = Rtt(memory_for(harness, cb, 64), cb)
     ocd.resume(entry)
+    if chip_ms is not None:
+        harness.timeout.restart(chip_ms=chip_ms)
     log.info("running %s from %#x", elf.name, entry)
 
-    deadline = time.monotonic() + timeout_s
-    rtt.wait_ready(timeout_s)
+    deadline = None if timeout_s is None else time.monotonic() + timeout_s
+
+    def check(what: str) -> None:
+        """Raise if the test has timed out, or ``timeout_s`` has passed."""
+        harness.timeout.check()
+        if deadline is not None and time.monotonic() > deadline:
+            raise PastelTimeout(f"{what} within {timeout_s:g} s")
+
+    rtt.wait_ready(check=lambda: check("the firmware did not start RTT"))
 
     def send(mid: Mbox, payload: bytes) -> None:
         msg = bytes([mid, len(payload)]) + payload
         while msg:
             msg = msg[rtt.write_down(MAILBOX_CHANNEL, msg) :]
             if msg:  # the buffer is full: wait for the firmware to read it
-                if time.monotonic() > deadline:
-                    raise PastelTimeout("the firmware stopped taking data from the host")
+                check("the firmware did not take the host's data")
                 time.sleep(poll_s)
 
     if link is not None:
         link._send = send
     try:
-        return _poll(harness, rtt, send, deadline, timeout_s, on_checkpoint, poll_s,
+        return _poll(harness, rtt, send, check, on_checkpoint, poll_s,
                      expect_fault, expect_errors)  # fmt: skip
     finally:
         if link is not None:
@@ -193,8 +208,7 @@ def _poll(
     harness: PlatformHarness,
     rtt: Rtt,
     send: Callable[[Mbox, bytes], None],
-    deadline: float,
-    timeout_s: float,
+    check: Callable[[str], None],
     on_checkpoint: Callable[[int], None] | None,
     poll_s: float,
     expect_fault: bool,
@@ -251,8 +265,7 @@ def _poll(
                     return result
                 log.error("%s", fault)
                 raise fault
-        if time.monotonic() > deadline:
-            raise PastelTimeout(f"firmware did not finish within {timeout_s:.0f} s")
+        check("the firmware did not finish")
         if not harness.platform.running:
             raise TargetError("platform stopped while firmware was running")
         time.sleep(poll_s)

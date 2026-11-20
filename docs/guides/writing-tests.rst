@@ -115,8 +115,8 @@ if the firmware finishes without one:
 
 PASTEL only knows an error is expected if the test says so in
 ``firmware.run()``. Errors caught with ``pytest.raises`` are still logged as
-``ERROR``. Not finishing within ``timeout_s`` (default 300 s, wall clock) raises
-:py:class:`~soc_pastel.core.errors.PastelTimeout`.
+``ERROR``. A test that runs out of time fails with
+:py:class:`~soc_pastel.core.errors.PastelTimeout` (see :ref:`timeouts`).
 
 How a test passes or fails
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -333,6 +333,60 @@ skipped elsewhere:
 Capabilities are interface instance names from the device descriptor
 (``"spi0"``, ``"gpio"``) and platform features: ``"backdoor"``, ``"sim_time"``,
 ``"waves"``.
+
+.. _timeouts:
+
+Time limits
+-----------
+
+Every test has a time limit, in **chip time**: how long its work would take on
+the chip itself, at its own clock. The same limit then suits every platform:
+
+- a simulator measures simulation time;
+- silicon measures wall-clock time;
+- an FPGA build measures wall-clock time too, stretched by how much slower it
+  runs than the chip. A device whose ``clock_mhz`` is 1000, built for an FPGA
+  at ``clock_mhz=20``, gets 50 times as long (see :doc:`device-pack`).
+
+A test times out once its chip time has passed the limit **and** a further
+grace period of wall-clock time has gone by. The grace covers what doesn't get
+faster on a faster platform: debug transfers, loading firmware over JTAG, the
+test's own Python. It is negligible next to a simulation and generous on
+hardware. The clock starts when the target is up and on-chip debug connected,
+so building and queueing don't count.
+
+A simulation whose time stops advancing (a hung simulator) also times out,
+after ``pastel_timeout_stall_s`` of wall-clock time.
+
+When a test times out, PASTEL stops the platform, so whatever the test was
+waiting for fails, and the test fails with the reason::
+
+    E   PastelTimeout: timed out: the test took more than 100 ms of chip time, plus 10 s grace
+
+The defaults suit most tests: 100 ms of chip time, 10 s grace, 10 minutes for
+a stalled simulation. Change them for a suite in ``pyproject.toml``:
+
+.. code-block:: toml
+
+   [tool.pytest.ini_options]
+   pastel_timeout_chip_ms = 100
+   pastel_timeout_grace_s = 10
+   pastel_timeout_stall_s = 600
+
+or for one run with ``-o pastel_timeout_chip_ms=500``. For one test, use the
+marker, where ``chip_ms=None`` means no limit:
+
+.. code-block:: python
+
+   @pytest.mark.pastel_timeout(chip_ms=2000)
+   def test_coremark(firmware): ...
+
+``firmware.run(chip_ms=...)`` gives a firmware run its own limit, counted from
+when the firmware starts. ``timeout_s=`` adds a plain wall-clock limit.
+``--pastel-no-timeout`` turns time limits off, for debugging interactively.
+
+Only waits PASTEL does itself notice a timeout straight away. A test that loops
+in its own Python finds out when it next touches the target.
 
 .. _waves:
 

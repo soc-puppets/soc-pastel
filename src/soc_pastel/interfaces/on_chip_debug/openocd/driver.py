@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -140,6 +141,9 @@ class OpenOcd(OnChipDebug):
             if key not in config:
                 raise ConfigurationError(f"{name}: openocd config needs {key!r}")
         self._proc: subprocess.Popen | None = None
+        # One Tcl request at a time: replies aren't tagged, and the firmware
+        # runner may poll memory while a test calls in from another thread.
+        self._tcl_lock = threading.RLock()
         self._link: _SocketLink | _PipeLink | None = None
         self._sidecar: str | None = None
         self._memory = _OcdMemory(self)
@@ -279,7 +283,8 @@ class OpenOcd(OnChipDebug):
         wrapped = (
             f'if {{[catch {{{command}}} __r]}} {{set __o "ERR:$__r"}} else {{set __o "OK:$__r"}}'
         )
-        reply = self._link.request(wrapped.encode(), timeout_s).decode(errors="replace")
+        with self._tcl_lock:
+            reply = self._link.request(wrapped.encode(), timeout_s).decode(errors="replace")
         if reply.startswith("OK:"):
             return reply[3:].strip()
         shown = command if len(command) < 120 else command[:117] + "..."

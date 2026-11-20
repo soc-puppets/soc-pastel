@@ -53,6 +53,7 @@ class Looping:
         """Wait for the CPU to halt (at a breakpoint); return the PC."""
         deadline = time.monotonic() + timeout_s
         while self.ocd.state() is not TargetState.HALTED:
+            self.harness.timeout.check()
             if time.monotonic() > deadline:
                 self.ocd.halt()
                 pytest.fail(f"no breakpoint hit within {timeout_s:.0f} s (pc {self.ocd.pc:#x})")

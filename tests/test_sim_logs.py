@@ -149,6 +149,9 @@ def fake_harness(errors, expected=(), started=True):
     h = PlatformHarness.__new__(PlatformHarness)
     h._platform, h._state, h._started, h._open = Platform(), "open", started, []
     h.expected_sim_errors = list(expected)
+    from soc_pastel.core.timeout import Watchdog
+
+    h.timeout = Watchdog(h)
     return h
 
 

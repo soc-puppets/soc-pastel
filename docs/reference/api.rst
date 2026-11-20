@@ -31,6 +31,9 @@ Core
 .. automodule:: soc_pastel.core.riscv
    :members:
 
+.. automodule:: soc_pastel.core.timeout
+   :members:
+
 .. automodule:: soc_pastel.core.capabilities
    :members:
    :show-inheritance:

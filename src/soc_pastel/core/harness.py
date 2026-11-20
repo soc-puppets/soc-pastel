@@ -27,6 +27,7 @@ from .interface import Interface
 from .memory import MemoryInterface, RoutedMemory
 from .on_chip_debug import OnChipDebug
 from .platform import Platform, SimulationPlatform
+from .timeout import Watchdog
 
 T = TypeVar("T", bound=Interface)
 
@@ -61,6 +62,8 @@ class PlatformHarness:
         self._started = False  # platform.start() has been called
         #: Patterns of simulator errors the test expects (see :meth:`expect_sim_error`).
         self.expected_sim_errors: list[str] = []
+        #: The test's time limit, in chip time (see :mod:`soc_pastel.core.timeout`).
+        self.timeout = Watchdog(self)
         self._interfaces: dict[str, Interface] = {
             name: cls(name, cfg, self) for name, (cls, cfg) in interfaces.items()
         }
@@ -202,6 +205,7 @@ class PlatformHarness:
             self.close()
             raise
         self._state = "open"
+        self.timeout.start()
 
     def close(self) -> None:
         """Close interfaces in reverse order, then stop the platform. Idempotent.
@@ -209,6 +213,7 @@ class PlatformHarness:
         A harness that was never opened has nothing to stop.
         """
         self._state = "closed"
+        self.timeout.stop()
         if not self._started:
             return
         errors: list[BaseException] = []

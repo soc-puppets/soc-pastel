@@ -19,15 +19,17 @@ import logging
 from collections.abc import Iterable, Iterator, Mapping
 from importlib import import_module
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import pytest
 
 from .core import registry
 from .core.device import Device
-from .core.errors import ConfigurationError, SimulatorError
+from .core.errors import ConfigurationError, PastelTimeout, SimulatorError
 from .core.harness import PlatformHarness
 from .core.interface import Interface
+from .core.timeout import TimeoutSettings
 from .core.util import XERROR
 from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter, turn_on_live_logging
 from .sim.logcheck import LogFindings, split_expected
@@ -36,6 +38,57 @@ try:  # pytest internals; see pytest_runtest_setup below
     from _pytest.tmpdir import tmppath_result_key as _TMP_PATH_RESULTS
 except ImportError:  # pragma: no cover - a pytest without the problem
     _TMP_PATH_RESULTS = None
+
+
+#: Suite-wide timeout settings: ini name, default, help.
+_TIMEOUT_INI = [
+    (
+        "pastel_timeout_chip_ms",
+        "100",
+        "Each test's time limit, in ms of chip time ('none' for no limit).",
+    ),
+    (
+        "pastel_timeout_grace_s",
+        "10",
+        "Wall-clock seconds allowed after a test's chip time runs out.",
+    ),
+    (
+        "pastel_timeout_stall_s",
+        "600",
+        "Wall-clock seconds simulation time may stand still ('none' never to check).",
+    ),
+]
+
+
+def _number(text: str, name: str) -> float | None:
+    if str(text).strip().lower() in ("", "none", "off"):
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        raise pytest.UsageError(f"{name}: expected a number or 'none', not {text!r}") from None
+
+
+def timeout_settings(item: pytest.Item) -> TimeoutSettings:
+    """A test's time limits: the suite's ini settings, then its ``pastel_timeout`` marker."""
+    config = item.config
+    if config.getoption("pastel_no_timeout"):
+        return TimeoutSettings()
+    values = {
+        key: _number(config.getini(name), name)
+        for key, (name, _, _) in zip(("chip_ms", "grace_s", "stall_s"), _TIMEOUT_INI, strict=True)
+    }
+    marker = item.get_closest_marker("pastel_timeout")
+    if marker is not None:
+        unknown = set(marker.kwargs) - set(values)
+        if unknown or marker.args:
+            raise pytest.UsageError(
+                f"{item.nodeid}: pastel_timeout takes chip_ms=, grace_s= and stall_s="
+            )
+        values.update(marker.kwargs)
+    if values["grace_s"] is None:
+        values["grace_s"] = 0.0
+    return TimeoutSettings(**values)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -58,6 +111,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help="Dump waveforms from the start of each test, on platforms that can.",
     )
+    group.addoption(
+        "--pastel-no-timeout",
+        action="store_true",
+        help="Don't time tests out (for debugging interactively).",
+    )
+    for name, default, text in _TIMEOUT_INI:
+        parser.addini(name, text, default=default)
     sim = parser.getgroup("soc-pastel simulation")
     sim.addoption(
         "--sim-launcher",
@@ -122,6 +182,9 @@ def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
     harness = getattr(item, "funcargs", {}).get("harness")
     if not isinstance(harness, PlatformHarness):
         return
+    if harness.timeout.expired:  # stopped by the watchdog: its log only shows that
+        harness.close()
+        return
     expected = harness.expected_sim_errors
     if not harness.started:
         if expected and not test_failed:
@@ -174,11 +237,38 @@ def pytest_runtest_call(item: pytest.Item):
         result = yield
     except KeyboardInterrupt:
         raise
-    except BaseException:
+    except BaseException as e:
+        timed_out = _timed_out(item)
         _finish_simulation(item, test_failed=True)
+        if timed_out:
+            # Whatever failed, it failed because the watchdog stopped the
+            # platform: report the timeout, where the test was waiting.
+            raise PastelTimeout(timed_out).with_traceback(_test_frames(item, e)) from None
         raise
-    _finish_simulation(item, test_failed=False)
+    timed_out = _timed_out(item)
+    _finish_simulation(item, test_failed=timed_out is not None)
+    if timed_out:
+        raise PastelTimeout(timed_out)
     return result
+
+
+def _test_frames(item: pytest.Item, error: BaseException) -> TracebackType | None:
+    """``error``'s traceback, cut off where it leaves the test's own file."""
+    tb = error.__traceback__
+    last_in_test = None
+    t = tb
+    while t is not None:
+        if Path(t.tb_frame.f_code.co_filename) == Path(item.path):
+            last_in_test = t
+        t = t.tb_next
+    if last_in_test is not None:
+        last_in_test.tb_next = None
+    return tb
+
+
+def _timed_out(item: pytest.Item) -> str | None:
+    harness = getattr(item, "funcargs", {}).get("harness")
+    return harness.timeout.expired if isinstance(harness, PlatformHarness) else None
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -203,6 +293,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "requires(*capabilities): skip unless the harness offers every capability "
         "(interface instance names or platform features such as 'backdoor').",
+    )
+    config.addinivalue_line(
+        "markers",
+        "pastel_timeout(chip_ms=, grace_s=, stall_s=): this test's time limit, in ms of "
+        "chip time, plus wall-clock grace; None for no limit.",
     )
 
 
@@ -263,6 +358,7 @@ def harness(
     test. Simulator and debugger logs are written to the test's ``tmp_path``.
     """
     h = build_harness(request.config, pastel_device, tmp_path)
+    h.timeout.configure(timeout_settings(request.node))
     request.node.user_properties.append((RUN_DIR, str(tmp_path)))
     for marker in request.node.iter_markers("requires"):
         missing = sorted(set(marker.args) - h.capabilities)
@@ -353,16 +449,20 @@ class Firmware:
         include_dirs: Iterable[str | Path] = (),
         defines: Iterable[str] = (),
         stack_size: int | None = None,
-        timeout_s: float = 300.0,
+        chip_ms: float | None = None,
+        timeout_s: float | None = None,
         expect_pass: bool = True,
         expect_fault: bool = False,
         **kwargs: Any,
     ):
         """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
 
-        ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; ``timeout_s``
-        and the rest (``on_checkpoint``, ...) to
-        :func:`~soc_pastel.fw.runner.run_firmware`.
+        ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; the
+        rest (``on_checkpoint``, ...) to :func:`~soc_pastel.fw.runner.run_firmware`.
+
+        ``chip_ms`` gives the firmware its own time limit, in ms of chip time
+        from when it starts, in place of the test's (see :ref:`timeouts`);
+        ``timeout_s`` adds a plain wall-clock limit.
 
         Fails the test with :class:`~soc_pastel.fw.runner.FirmwareFailed` if
         the firmware returns non-zero or reports errors, unless
@@ -381,6 +481,7 @@ class Firmware:
         result = run_firmware(
             self.harness,
             elf,
+            chip_ms=chip_ms,
             timeout_s=timeout_s,
             expect_fault=expect_fault,
             expect_errors=not expect_pass,

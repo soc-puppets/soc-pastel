@@ -60,6 +60,12 @@ class PlatformControl(RequestReplyHandler):
     type_name = "pastel.platform"
     _FINISH, _GET_TIME, _SET_WAVES, _TIME, _WAVES = 0x01, 0x02, 0x03, 0x82, 0x83
 
+    def __init__(self, info: EndpointInfo, send) -> None:
+        super().__init__(info, send)
+        # Replies aren't numbered, so one request at a time (a test and the
+        # timeout watchdog both ask for the time).
+        self._request = threading.Lock()
+
     def on_message(self, payload: bytes) -> None:  # noqa: D102
         if payload[:1] == bytes([self._TIME]) and len(payload) == 9:
             self._deliver(0, payload[1:])
@@ -72,8 +78,9 @@ class PlatformControl(RequestReplyHandler):
 
     def time_ns(self) -> int:
         """Current simulation time in nanoseconds."""
-        self.send(bytes([self._GET_TIME]))
-        return int.from_bytes(self._wait(0, "time request"), "little")
+        with self._request:
+            self.send(bytes([self._GET_TIME]))
+            return int.from_bytes(self._wait(0, "time request"), "little")
 
     def set_waves(self, enable: bool) -> bool:
         """Turn waveform dumping on or off; return True if waves are now being dumped.
@@ -83,8 +90,9 @@ class PlatformControl(RequestReplyHandler):
         built without tracing always answers False; a simulator that cannot
         pause dumping (Verilator) always answers True.
         """
-        self.send(bytes([self._SET_WAVES, int(enable)]))
-        return self._wait(1, "waves request") != b"\x00"
+        with self._request:
+            self.send(bytes([self._SET_WAVES, int(enable)]))
+            return self._wait(1, "waves request") != b"\x00"
 
 
 class Backdoor(RequestReplyHandler):

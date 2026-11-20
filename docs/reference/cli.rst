@@ -24,6 +24,8 @@ pytest options
      - Don't turn on pytest's live logging, which shows PASTEL's progress
        as tests run. PASTEL never overrides live-logging settings you've
        made yourself.
+   * - ``--pastel-no-timeout``
+     - Don't time tests out (see :ref:`timeouts`), for debugging interactively.
    * - ``--sim-launcher=<template>``
      - Run the simulator through a command: a prefix (``srun -p sim``) or a
        template with ``{cmd}`` (``ssh simbox {cmd}``). See
@@ -103,6 +105,26 @@ Markers
 ``@pytest.mark.requires(*capabilities)``
    Skip the test unless the harness offers every capability: interface
    instance names, or ``backdoor``, ``sim_time``, ``waves``.
+``@pytest.mark.pastel_timeout(chip_ms=, grace_s=, stall_s=)``
+   This test's time limit (see :ref:`timeouts`); ``chip_ms=None`` for none.
+
+Settings
+--------
+
+In ``[tool.pytest.ini_options]``, or for one run with ``-o name=value``:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Setting
+     - Meaning
+   * - ``pastel_timeout_chip_ms``
+     - Each test's time limit, in ms of chip time (default 100; ``none`` for no limit)
+   * - ``pastel_timeout_grace_s``
+     - Wall-clock seconds allowed after the chip time runs out (default 10)
+   * - ``pastel_timeout_stall_s``
+     - Wall-clock seconds simulation time may stand still before the simulator
+       counts as stuck (default 600; ``none`` never to check)
 
 Fixtures
 --------
