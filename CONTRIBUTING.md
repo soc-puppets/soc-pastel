@@ -46,3 +46,43 @@ Constructs to avoid:
 first of these.
 Add to this list, and to the check where it can be automated, when a
 simulator turns out to reject something PASTEL uses.
+
+## Releasing
+
+Releases are published to [PyPI](https://pypi.org/project/soc-pastel/) by
+`.github/workflows/release.yml`, using trusted publishing (no API tokens).
+The version comes from the git tag (hatch-vcs): tag `v0.2.0` builds 0.2.0;
+between tags, builds are dev versions such as `0.2.1.dev3`. Nothing in the
+repository holds a version number to bump.
+
+To release:
+
+1. Check `main` is green in CI and has what you want to release.
+2. On GitHub, **Releases → Draft a new release**: a new tag `vX.Y.Z` on
+   `main`, a title, and **Generate release notes**. Tick **Set as a
+   pre-release** for a version like `v0.2.0rc1`. **Publish release**.
+3. The workflow builds the package, checks it (the version must match the
+   tag), publishes it to [TestPyPI](https://test.pypi.org/project/soc-pastel/)
+   and installs it back from there.
+4. It then waits for approval of the `pypi` environment. Check the TestPyPI
+   release if you like, then approve the run (**Review deployments**). It
+   publishes to PyPI and attaches the files to the GitHub release.
+
+To rehearse without releasing, run the workflow by hand (**Actions → Release
+→ Run workflow**): it publishes the chosen branch to TestPyPI only, as a dev
+version.
+
+A version can't be uploaded twice. If a release goes wrong after reaching
+PyPI, fix it and release the next version; don't reuse the tag.
+
+One-time set-up (done by a maintainer with admin rights):
+
+- **PyPI** (soc-pastel → Manage → Publishing) and **TestPyPI** (the same,
+  on test.pypi.org): add a trusted publisher for GitHub: owner
+  `soc-puppets`, repository `soc-pastel`, workflow `release.yml`,
+  environment `pypi` (PyPI) or `testpypi` (TestPyPI).
+- **GitHub** (Settings → Environments): create `testpypi`, and `pypi` with
+  the maintainers as required reviewers.
+
+The VeeRwolf pack (`packages/veerwolf`) isn't published: it's the reference
+pack, installed from the repository.

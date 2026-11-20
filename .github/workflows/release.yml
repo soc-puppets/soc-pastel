@@ -1,0 +1,127 @@
+# Publishing soc-pastel. See "Releasing" in CONTRIBUTING.md.
+#
+# Publishing a GitHub Release (tag vX.Y.Z) builds the package once, checks it,
+# publishes it to TestPyPI and installs it back from there, then waits for a
+# reviewer to approve the `pypi` environment before publishing to PyPI, and
+# finally attaches the files to the GitHub Release.
+#
+# Running the workflow by hand (Actions > Release > Run workflow) does the
+# TestPyPI half only, for the chosen branch: a rehearsal, with a dev version
+# such as 0.1.1.dev3.
+#
+# Uploads use PyPI trusted publishing: no API tokens are stored anywhere.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tags, which set the version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Version
+        id: version
+        run: |
+          wheel=$(ls dist/*.whl)
+          version=$(basename "$wheel" | cut -d- -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Built soc-pastel $version"
+      - name: The version is the release's tag
+        if: github.event_name == 'release'
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          if [ "v${{ steps.version.outputs.version }}" != "$tag" ]; then
+            echo "::error::built version ${{ steps.version.outputs.version }} doesn't match tag $tag (tags look like v0.1.0)"
+            exit 1
+          fi
+      - name: The wheel works on its own
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/smoke/bin/pastel list
+          /tmp/smoke/bin/python -m pytest --pyargs soc_pastel.conformance --collect-only -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/soc-pastel/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true # a rehearsal may be run again on the same commit
+      - name: Install it back from TestPyPI
+        run: |
+          python -m venv /tmp/fromtest
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do  # the index takes a moment to update
+            if /tmp/fromtest/bin/pip install --index-url https://test.pypi.org/simple/ \
+                 --extra-index-url https://pypi.org/simple/ \
+                 "soc-pastel==${{ needs.build.outputs.version }}"; then
+              cd /tmp && /tmp/fromtest/bin/pastel list
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::soc-pastel ${{ needs.build.outputs.version }} didn't install from TestPyPI"
+          exit 1
+
+  pypi:
+    if: github.event_name == 'release'
+    needs: [build, testpypi]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi # its required reviewers are the approval step
+      url: https://pypi.org/project/soc-pastel/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  attach:
+    if: github.event_name == 'release'
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload to the release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/* --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
