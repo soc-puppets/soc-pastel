@@ -269,7 +269,13 @@ class FirmwareRun:
         ocd.reset(halt=True)
         entry = load_elf(h, self.elf)
         cb = elf_symbol(self.elf, "_SEGGER_RTT")
-        self._rtt = Rtt(memory_for(h, cb, 64), cb)
+        memory = memory_for(h, cb, 64)
+        # The control block is in .bss, which loading doesn't touch, so it may
+        # still hold the previous run's valid id until the new firmware gets
+        # round to initialising it. Clear the id now, while the CPU is halted,
+        # so wait_ready() only sees this firmware's block.
+        memory.write(cb, bytes(16))
+        self._rtt = Rtt(memory, cb)
         ocd.resume(entry)
         if self._chip_ms is not None:
             h.timeout.restart(chip_ms=self._chip_ms)

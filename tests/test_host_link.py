@@ -45,3 +45,40 @@ def test_waiting_while_the_firmware_is_held_warns(caplog):
     with pytest.raises(RuntimeError, match="stopped"):
         run.wait_checkpoint(2)
     assert "held at waiting checkpoint 1" in caplog.text
+
+
+def test_a_previous_runs_rtt_block_is_invalidated_before_the_firmware_starts(monkeypatch):
+    """Two runs in one test: the new firmware's start-up code runs before it sets up
+    RTT, and meanwhile the old control block (in .bss, which loading leaves alone)
+    must not look valid, or the host reads the old run's buffers."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from soc_pastel.fw import runner
+
+    events = []
+    rtt_id = bytearray(b"SEGGER RTT\0\0\0\0\0\0")  # left by the previous run
+
+    class Memory:
+        def read(self, addr, length):
+            return bytes(rtt_id[:length]) + bytes(max(0, length - 16))
+
+        def write(self, addr, data):
+            events.append(("clear id", bytes(data)))
+            rtt_id[:] = data[:16]
+
+    class Ocd:
+        def reset(self, *, halt):
+            events.append("reset")
+
+        def resume(self, pc=None):
+            events.append("resume")
+            rtt_id[:] = b"SEGGER RTT\0\0\0\0\0\0"  # the new firmware sets it up
+
+    harness = SimpleNamespace(ocd=Ocd(), timeout=SimpleNamespace(check=lambda: None))
+    monkeypatch.setattr(runner, "load_elf", lambda h, elf: 0x100)
+    monkeypatch.setattr(runner, "elf_symbol", lambda elf, name: 0x2000)
+    monkeypatch.setattr(runner, "memory_for", lambda h, addr, length: Memory())
+    run = runner.FirmwareRun(harness, Path("fw.elf"))
+    run._launch()
+    assert events == ["reset", ("clear id", bytes(16)), "resume"]
