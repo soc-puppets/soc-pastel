@@ -72,6 +72,25 @@ module pastel_veerwolf_tb;
 
   pastel_veerwolf_backdoor u_backdoor (.clk(clk));
 
+  // --- Test hook: errors on request ----------------------------------------
+  // PASTEL's own tests use this to check that errors from the simulation fail
+  // a test. Writing one of these values to the last RAM word (0x000F_FFF8)
+  // makes the testbench print, once:
+  //   REQ_SIM_ERROR:  a simulator error ($error)
+  //   REQ_TB_MESSAGE: "TB ERROR: ...", the testbench's own error format, which
+  //                   is only an error if the device pack's log rules say so
+  localparam logic [63:0] REQ_SIM_ERROR = 64'h5245_4c45_5453_4150;   // "PASTELER"
+  localparam logic [63:0] REQ_TB_MESSAGE = 64'h4d54_4c45_5453_4150;  // "PASTELTM"
+  localparam int REQ_WORD = RAM_SIZE / 8 - 1;
+  logic [63:0] last_request = '0;
+  always @(posedge clk) begin
+    if (ram.mem[REQ_WORD] != last_request) begin
+      if (ram.mem[REQ_WORD] == REQ_SIM_ERROR) $error("error requested by the test");
+      if (ram.mem[REQ_WORD] == REQ_TB_MESSAGE) $display("TB ERROR: message requested by the test");
+      last_request <= ram.mem[REQ_WORD];
+    end
+  end
+
   // --- GPIO --------------------------------------------------------------------
   // VeeRwolf's GPIO has separate inputs and outputs (syscon 0x10: writes set
   // o_gpio, reads return i_gpio), not bidirectional pads. Model 32 pads:

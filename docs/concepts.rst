@@ -37,7 +37,8 @@ for that platform:
    * - ``harness.ocd``
      - The on-chip debug interface (reset, halt, registers, memory)
    * - ``harness.memory()``
-     - The fastest memory path: the backdoor in simulation, debug otherwise
+     - The fastest memory path for each address: the backdoor where one reaches,
+       debug otherwise
    * - ``harness.iface("spi0")``
      - Any other interface, by instance name
    * - ``harness.regs``
@@ -84,6 +85,13 @@ bind an ``on_chip_debug`` interface, and the harness opens it before any other.
 
 Simulation
 ----------
+
+.. figure:: diagrams/pastel-overview.svg
+   :alt: The components of a PASTEL simulation run and how they connect.
+   :width: 100%
+
+   The parts of a simulation run, what each is written in, and how they
+   talk to each other.
 
 A simulation runs as its own process. On the first clock edge the testbench's
 ``pastel_server`` dials back to the test process and announces its *endpoints*:

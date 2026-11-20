@@ -2,8 +2,9 @@
 
 import pytest
 
+from soc_pastel.core import TargetError
 from soc_pastel.core.loader import elf_symbol, memory_for
-from soc_pastel.fw.runner import FirmwareFault
+from soc_pastel.fw.runner import FirmwareFailed, FirmwareFault
 
 
 def test_hello(firmware):
@@ -12,20 +13,50 @@ def test_hello(firmware):
     assert result.passed
     assert f"Hello from {firmware.harness.device.name}" in result.output
     assert "signed -42, unsigned 42, hex 0x00c0ffee" in result.output
+    assert "uint32_t 42, hex 0x00c0ffee" in result.output  # %lu, %lx
     assert seen == [1]
     assert result.data == [bytes.fromhex("deadbeef")]
 
 
 def test_nonzero_result_is_reported(firmware):
-    result = firmware.run("fw/fail.c")
+    result = firmware.run("fw/fail.c", expect_pass=False)
     assert not result.passed
     assert result.result == 7
+    with pytest.raises(FirmwareFailed, match="test_main returned 7"):
+        firmware.run("fw/fail.c")
+
+
+def test_checks_and_errors_carry_on_and_fail_the_test(firmware):
+    result = firmware.run("fw/checks.c", expect_pass=False)
+    assert result.result == 0 and not result.passed
+    assert result.errors == [
+        "checks.c:9: CHECK failed: three == 4",
+        "checks.c:10: CHECK failed: three < 0: three is 3",
+        "custom error beef",
+    ]
+    assert "checking 3 things\n" in result.output and "still running" in result.output
+    with pytest.raises(FirmwareFailed, match="3 errors"):
+        firmware.run("fw/checks.c")
+
+
+def test_assert_ends_the_test(firmware):
+    result = firmware.run("fw/checks.c", defines=["PASTEL_ASSERT_TEST"], expect_pass=False)
+    assert result.result != 0
+    assert result.errors[-1] == "checks.c:13: ASSERT failed: three == 5: stop here"
+    assert "not reached" not in result.output and "still running" not in result.output
 
 
 def test_fault_is_reported(firmware):
     with pytest.raises(FirmwareFault) as e:
         firmware.run("fw/fault.c")
     assert e.value.cause == 2  # illegal instruction
+
+
+def test_expected_fault_is_returned(firmware):
+    result = firmware.run("fw/fault.c", expect_fault=True)
+    assert result.fault is not None and result.fault.cause == 2 and not result.passed
+    with pytest.raises(FirmwareFailed, match="expected a fault"):
+        firmware.run("fw/hello.c", expect_fault=True)
 
 
 def test_host_and_firmware_share_memory(firmware):
@@ -46,3 +77,46 @@ def test_host_and_firmware_share_memory(firmware):
     from soc_pastel.fw.runner import run_firmware
 
     assert run_firmware(harness, elf, on_checkpoint=on_checkpoint).passed
+
+
+def test_host_sends_data_to_firmware(firmware):
+    big = bytes((i * 7) & 0xFF for i in range(255))
+
+    def on_checkpoint(cp):
+        if cp == 1:  # the firmware is waiting: it keeps these until it asks
+            firmware.send_u32(0xC0FFEE55)
+            firmware.send(b"hello")
+        elif cp == 2:  # it is already waiting in pastel_receive
+            firmware.send(big)
+
+    result = firmware.run("fw/receive.c", on_checkpoint=on_checkpoint)
+    assert result.data == [bytes([sum(big) & 0xFF])]
+
+
+def test_started_firmware_runs_while_the_test_acts(firmware):
+    run = firmware.start("fw/started.c")
+    with run.at_checkpoint(1):  # the firmware is held until the block ends
+        run.send_u32(6)
+    run.wait_checkpoint(3)
+    run.wait_checkpoint(3)
+    run.wait_checkpoint(2)
+    firmware.send_u32(7)  # the fixture's send() reaches a started run too
+    result = run.wait()
+    assert result.passed and result.data == [(42).to_bytes(4, "little")]
+    assert "6 x 7 = 42" in result.output
+    assert result.checkpoints == [1, 3, 3, 2]
+
+
+def test_started_firmware_that_finishes_first(firmware):
+    run = firmware.start("fw/fail.c", expect_pass=False)  # no checkpoints: returns 7
+    with pytest.raises(TargetError, match="finished before checkpoint 99"):
+        run.wait_checkpoint(99)
+    assert run.wait().result == 7
+
+
+def test_started_firmware_fault(firmware):
+    run = firmware.start("fw/fault.c", expect_fault=True)
+    assert run.wait().fault.cause == 2
+    run = firmware.start("fw/fault.c")
+    with pytest.raises(FirmwareFault):
+        run.wait()

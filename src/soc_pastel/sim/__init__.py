@@ -9,8 +9,9 @@ particular chip or interface:
   simulator with SystemVerilog DPI.
 * Launching a simulator, locally or on another machine (:mod:`.launch`), and
   the host side of its connection (:mod:`.session`, :mod:`.handlers`).
-* The simulation platforms. Verilator is the only one so far; others reuse
-  everything above and add only how to build and run a model.
+* The simulation platforms (:mod:`.simulator` and one module per simulator:
+  Verilator, Xcelium, and experimental VCS and Questa). Each adds only how
+  to build and run a model.
 
 Interface-specific VIPs live with their interface packs under
 ``soc_pastel.interfaces``.

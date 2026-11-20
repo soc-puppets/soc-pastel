@@ -28,6 +28,12 @@ Core
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.core.riscv
+   :members:
+
+.. automodule:: soc_pastel.core.timeout
+   :members:
+
 .. automodule:: soc_pastel.core.capabilities
    :members:
    :show-inheritance:
@@ -49,6 +55,20 @@ Core
    :show-inheritance:
 
 .. automodule:: soc_pastel.core.registry
+   :members:
+   :show-inheritance:
+
+Hardware
+--------
+
+.. automodule:: soc_pastel.hardware
+   :members:
+   :show-inheritance:
+
+Reporting
+---------
+
+.. automodule:: soc_pastel.reporting
    :members:
    :show-inheritance:
 
@@ -74,7 +94,27 @@ Simulation
    :members:
    :show-inheritance:
 
+.. automodule:: soc_pastel.sim.logcheck
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.simulator
+   :members:
+   :show-inheritance:
+
 .. automodule:: soc_pastel.sim.verilator
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.xcelium
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.vcs
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.sim.questa
    :members:
    :show-inheritance:
 
@@ -90,6 +130,10 @@ Interfaces
 ----------
 
 .. automodule:: soc_pastel.interfaces.on_chip_debug.openocd
+   :members:
+   :show-inheritance:
+
+.. automodule:: soc_pastel.interfaces.on_chip_debug.jlink
    :members:
    :show-inheritance:
 

@@ -12,15 +12,20 @@ params::
 
     def fw_build(variant: Variant) -> FirmwareOptions:
         return FirmwareOptions(include_dirs=(REPO / "sw" / "include",), defines=("CHIP_SIM=1",))
+
+Every build is from scratch, into its own directory: nothing is cached
+between builds, so a test never runs stale firmware. A build takes about a
+second.
 """
 
 from __future__ import annotations
 
-import hashlib
+import logging
 import os
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -29,13 +34,24 @@ from pathlib import Path
 from soc_pastel import FW_ROOT
 from soc_pastel.core.device import CodeLocation, Device, Variant
 from soc_pastel.core.errors import ConfigurationError
-from soc_pastel.core.util import file_lock
+from soc_pastel.sim.logcheck import COMPILER_RULES
+
+log = logging.getLogger(__name__)
 
 #: Default stack size in bytes; override per build.
 DEFAULT_STACK_SIZE = 4096
 
-#: Files in include directories that are part of a build's identity.
-HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".inc"})
+
+class FirmwareBuildError(ConfigurationError):
+    """The firmware didn't compile or link.
+
+    Attributes:
+        log: The build's ``build.log``: the command line, then the compiler's output.
+    """
+
+    def __init__(self, message: str, log: Path) -> None:
+        super().__init__(message)
+        self.log = log
 
 
 @dataclass(frozen=True)
@@ -65,19 +81,6 @@ def variant_options(variant: Variant) -> FirmwareOptions:
     if not isinstance(options, FirmwareOptions):
         raise ConfigurationError(f"{ref} returned {type(options).__name__}, not FirmwareOptions")
     return options
-
-
-def _headers(dirs: Iterable[Path]) -> list[Path]:
-    """Every header under each include directory, in a stable order.
-
-    Recursive, because headers are usually included with a directory prefix
-    (``#include "pastel/mailbox.h"``).
-    """
-    found: list[Path] = []
-    for d in dict.fromkeys(dirs):  # unique, in order
-        if d.is_dir():
-            found += sorted(f for f in d.rglob("*") if f.suffix in HEADER_SUFFIXES and f.is_file())
-    return found
 
 
 def _ident(name: str) -> str:
@@ -212,8 +215,10 @@ def build_firmware(
 ) -> Path:
     """Compile and link test firmware; return the ELF path.
 
-    Results are cached in ``out_dir`` by a hash of every input, so repeated
-    builds (e.g. once per test) are free.
+    Always builds from scratch, into ``out_dir/<first source>-<location>/``:
+    the ELF, ``build.log`` and the generated ``gen/memory_map.h`` and
+    ``gen/link.ld``. Compiler warnings are logged; errors raise
+    :class:`FirmwareBuildError`.
     """
     tc = toolchain or Toolchain()
     sources = [Path(s).resolve() for s in sources]
@@ -221,10 +226,11 @@ def build_firmware(
     extra = variant_options(variant)
     defines = [*extra.defines, *defines]
     # Search order: generated header, PASTEL's own, the variant's, the test's.
-    pastel_dirs = [FW_ROOT / "include", FW_ROOT / "runtime"]
-    user_dirs = [Path(d).resolve() for d in (*extra.include_dirs, *include_dirs)]
-    header = memory_map_header(device, variant)
-    script = linker_script(variant, location, stack_size)
+    include_dirs = [
+        FW_ROOT / "include",
+        FW_ROOT / "runtime",
+        *(Path(d).resolve() for d in (*extra.include_dirs, *include_dirs)),
+    ]
     flags = [
         f"-march={device.cpu.isa}",
         f"-mabi={device.cpu.abi}",
@@ -235,34 +241,35 @@ def build_firmware(
         "-nostdlib",
         "-nostartfiles",
         "-Wall",
+        "-Wno-format-zero-length",  # PASTEL_CHECK(expr) without a message
         "-Wl,--gc-sections",
         "-Wl,--no-warn-rwx-segments",
         "-ffunction-sections",
         "-fdata-sections",
         *(f"-D{d}" for d in defines),
     ]
-    h = hashlib.sha256()
-    for part in (header, script, " ".join(flags), tc.tool("gcc"), str(stack_size)):
-        h.update(part.encode())
-    for src in all_sources:
-        h.update(str(src).encode())
-        h.update(src.read_bytes())
-    # Include directories and their headers: a regenerated register header
-    # must rebuild the firmware, not reuse a stale ELF.
-    for d in user_dirs:
-        h.update(f"-I{d}".encode())
-    for header_file in _headers([*pastel_dirs, *user_dirs]):
-        h.update(str(header_file).encode())
-        h.update(header_file.read_bytes())
     stem = (sources[0].stem if sources else "firmware") + f"-{location.name}"
-    work = out_dir / f"{stem}-{h.hexdigest()[:12]}"
+    work = out_dir / stem
+    if work.exists():
+        shutil.rmtree(work)
+    header = memory_map_header(device, variant)
+    script = linker_script(variant, location, stack_size)
     elf = work / f"{stem}.elf"
-    if elf.is_file():
-        return elf
-    with file_lock(work.with_suffix(".lock")):  # parallel test workers share builds
-        if elf.is_file():
-            return elf
-        _compile(tc, flags, header, script, all_sources, [*pastel_dirs, *user_dirs], work, elf)
+    began = time.monotonic()
+    warnings = _compile(tc, flags, header, script, all_sources, include_dirs, work, elf)
+    took = time.monotonic() - began
+    if warnings:
+        log.warning(
+            "built %s in %.1f s with %d warning%s (see %s):\n%s",
+            elf.name,
+            took,
+            len(warnings),
+            "s" if len(warnings) != 1 else "",
+            work / "build.log",
+            "\n".join(f"  {w}" for w in warnings[:10]),
+        )
+    else:
+        log.info("built %s in %.1f s", elf.name, took)
     return elf
 
 
@@ -275,16 +282,16 @@ def _compile(
     include_dirs: Iterable[Path],
     work: Path,
     elf: Path,
-) -> None:
+) -> list[str]:
+    """Compile and link; return the compiler's warnings."""
     gen = work / "gen"
     gen.mkdir(parents=True, exist_ok=True)
     (gen / "memory_map.h").write_text(header)
     (gen / "link.ld").write_text(script)
-    incs = [gen, *include_dirs]
     cmd = [
         tc.tool("gcc"),
         *flags,
-        *(f"-I{i}" for i in incs),
+        *(f"-I{i}" for i in [gen, *include_dirs]),
         "-include",
         str(gen / "memory_map.h"),
         "-T",
@@ -294,6 +301,11 @@ def _compile(
         *map(str, all_sources),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    (work / "build.log").write_text(" ".join(cmd) + "\n\n" + result.stdout + result.stderr)
-    if result.returncode != 0:
-        raise ConfigurationError(f"firmware build failed:\n{result.stderr}")
+    output = result.stdout + result.stderr
+    build_log = work / "build.log"
+    build_log.write_text("$ " + " ".join(cmd) + "\n\n" + output)
+    findings = COMPILER_RULES.check_text(output)
+    if result.returncode != 0 or not elf.is_file():
+        errors = "\n".join(line for _, line in findings.errors[:20]) or output[-3000:]
+        raise FirmwareBuildError(f"firmware build failed (see {build_log}):\n{errors}", build_log)
+    return [line.strip() for _, line in findings.warnings]

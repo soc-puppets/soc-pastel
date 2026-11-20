@@ -144,11 +144,73 @@ def test_hook_include_dirs_and_defines_reach_the_compiler(hook_variant, tmp_path
 
 
 @needs_toolchain
-def test_changing_an_included_header_rebuilds(hook_variant, tmp_path):
+def test_every_build_is_fresh(hook_variant, tmp_path):
+    from elftools.elf.elffile import ELFFile
+
+    def gpio_constant(elf):
+        # The address the firmware compares with, as it ended up in the ELF.
+        with open(elf, "rb") as f:
+            return ELFFile(f).get_section_by_name(".text").data()
+
     src = tmp_path / "t.c"
     src.write_text(FW)
     dev, loc = device_with(hook_variant), hook_variant.code_location("ram")
     first = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o")
-    assert build_firmware(dev, hook_variant, loc, [src], tmp_path / "o") == first  # cached
+    before = gpio_constant(first)
     (tmp_path / "chip_inc" / "chip" / "regs.h").write_text("#define CHIP_REG_GPIO 0x80001018u\n")
-    assert build_firmware(dev, hook_variant, loc, [src], tmp_path / "o") != first
+    second = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o")
+    assert second == first == tmp_path / "o" / "t-ram" / "t-ram.elf"  # same place, rebuilt
+    assert gpio_constant(second) != before
+
+
+@needs_toolchain
+def test_warnings_are_reported(hook_variant, tmp_path, caplog):
+    src = tmp_path / "w.c"
+    src.write_text(FW.replace("int test_main(void) {", "int test_main(void) { int unused;"))
+    dev = device_with(hook_variant)
+    with caplog.at_level("INFO", logger="soc_pastel"):
+        build_firmware(dev, hook_variant, hook_variant.code_location("ram"), [src], tmp_path / "o")
+    [record] = [r for r in caplog.records if "warning" in r.getMessage()]
+    assert record.levelname == "WARNING" and "unused variable" in record.getMessage()
+    assert "build.log" in record.getMessage()
+
+
+@needs_toolchain
+def test_errors_raise_with_the_compilers_message(hook_variant, tmp_path):
+    from soc_pastel.fw.build import FirmwareBuildError
+
+    src = tmp_path / "e.c"
+    src.write_text("int test_main(void) { return 0 }\n")
+    dev = device_with(hook_variant)
+    with pytest.raises(FirmwareBuildError, match="expected ';'") as e:
+        build_firmware(dev, hook_variant, hook_variant.code_location("ram"), [src], tmp_path / "o")
+    assert e.value.log.name == "build.log" and e.value.log.is_file()
+    assert "build.log" in str(e.value)
+
+
+def test_firmware_is_built_before_the_platform_starts(tmp_path, monkeypatch):
+    from soc_pastel.core import PlatformHarness
+    from soc_pastel.pytest_plugin import Firmware
+
+    class Stop(Exception):
+        pass
+
+    dev = device_with(VARIANT)
+    harness = PlatformHarness.__new__(PlatformHarness)
+    harness.device, harness.variant, harness._started = dev, VARIANT, False
+    seen = []
+
+    def fake_build(*args, **kwargs):
+        seen.append(harness.started)
+        return tmp_path / "x.elf"
+
+    def fake_run(h, elf, **kwargs):
+        seen.append("run")
+        raise Stop
+
+    monkeypatch.setattr("soc_pastel.fw.build.build_firmware", fake_build)
+    monkeypatch.setattr("soc_pastel.fw.runner.run_firmware", fake_run)
+    fw = Firmware(harness, tmp_path, tmp_path / "fw", "ram")
+    with pytest.raises(Stop):
+        fw.run("t.c")
+    assert seen == [False, "run"]  # built with nothing started yet

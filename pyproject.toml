@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jlink = ["pylink-square>=1.2"]
+jlink = ["pexpect>=4.8", "pylink-square>=1.2"]
 pyocd = ["pyocd>=0.36"]
 dev = ["ruff>=0.15", "pytest-cov", "pytest-xdist"]
 docs = ["sphinx>=8", "sphinx-rtd-theme>=3.0", "sphinx-copybutton>=0.5"]
@@ -54,6 +54,10 @@ soc_pastel = "soc_pastel.pytest_plugin"
 
 [project.entry-points."soc_pastel.platforms"]
 verilator = "soc_pastel.sim.verilator:VerilatorPlatform"
+xcelium = "soc_pastel.sim.xcelium:XceliumPlatform"
+vcs = "soc_pastel.sim.vcs:VcsPlatform"
+questa = "soc_pastel.sim.questa:QuestaPlatform"
+fpga = "soc_pastel.hardware:FpgaPlatform"
 
 [project.entry-points."soc_pastel.hdl"]
 soc_pastel = "soc_pastel:HDL_ROOT"
@@ -82,3 +86,6 @@ known-first-party = ["soc_pastel", "soc_pastel_veerwolf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Each test's name, then PASTEL's progress lines (pytest's live logging,
+# which PASTEL turns on), then its result.
+addopts = "-v"

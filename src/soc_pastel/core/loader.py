@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,7 +11,7 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 
 from .errors import ConfigurationError, TargetError
-from .memory import MemoryInterface
+from .memory import MemoryInterface, RoutedMemory
 
 if TYPE_CHECKING:
     from .harness import PlatformHarness
@@ -18,7 +20,10 @@ if TYPE_CHECKING:
 def memory_for(harness: PlatformHarness, addr: int, length: int) -> MemoryInterface:
     """The fastest memory interface that reaches ``[addr, addr + length)``."""
     mem = harness.memory()
-    return mem if mem.can_access(addr, length) else harness.ocd.memory
+    return mem.route(addr, length) if isinstance(mem, RoutedMemory) else mem
+
+
+log = logging.getLogger(__name__)
 
 
 def load_elf(harness: PlatformHarness, path: Path, *, verify: bool = False) -> int:
@@ -28,6 +33,8 @@ def load_elf(harness: PlatformHarness, path: Path, *, verify: bool = False) -> i
     on-chip debug otherwise. The CPU must be halted. Zero-initialised data is
     not written; the firmware start-up code clears it.
     """
+    began = time.monotonic()
+    loaded: dict[str, int] = {}
     with open(path, "rb") as f:
         elf = ELFFile(f)
         for seg in elf.iter_segments():
@@ -38,6 +45,9 @@ def load_elf(harness: PlatformHarness, path: Path, *, verify: bool = False) -> i
             mem.write(addr, data)
             if verify and mem.read(addr, len(data)) != data:
                 raise TargetError(f"verify failed for segment at {addr:#x} via {mem.name}")
+            loaded[mem.name] = loaded.get(mem.name, 0) + len(data)
+        how = ", ".join(f"{n} bytes via {name}" for name, n in loaded.items())
+        log.info("loaded %s (%s) in %.1f s", path.name, how, time.monotonic() - began)
         return int(elf.header["e_entry"])
 
 

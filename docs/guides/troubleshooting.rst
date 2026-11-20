@@ -21,10 +21,11 @@ Where the logs are
      - In the test's pytest temporary directory, in the simulator's own
        format (``sim.fst`` with Verilator)
    * - Firmware build
-     - ``.pastel/firmware/<device>/<name>-<location>-<hash>/build.log``
+     - ``fw/<name>-<location>/build.log`` in the test's run directory``
 
-pytest prints the temporary directory (``/tmp/pytest-of-$USER/...``) for failing
-tests.
+A failing test's report has a "PASTEL: where to look" section with its run
+directory (``/tmp/pytest-of-$USER/...``) and the logs in it, and the end of the
+run lists the run directories of every failing test.
 
 Installing
 ----------
@@ -75,6 +76,17 @@ path. Use another ``--verilator-workdir``, or delete the image directory.
 **``pastel: sidecar ... still running ... after finish was requested; killing it`` in ``sim.log``.**
 OpenOCD didn't exit when the test ended, so each test waits about 5 seconds
 before the simulator kills it. Check ``openocd.log`` for what it was doing.
+
+**``<simulator> build reported errors``.**
+The build log has error messages even though the tool may have exited
+successfully. The error quotes them with their line numbers in ``build.log``.
+
+**``SimulatorError: simulation reported errors``.**
+The test itself passed, but ``sim.log`` has error messages: a ``$error``, a
+failed assertion, ``UVM_ERROR``, or the simulator exited with a failing
+status. The error quotes the lines and gives the log's path. If a message is
+harmless, waive it with an ``ignore`` rule in the device pack (see
+:ref:`adding log rules <log-rules>`).
 
 **The model rebuilds on every run.**
 A listed file changes between runs in more than comments. Make the generating

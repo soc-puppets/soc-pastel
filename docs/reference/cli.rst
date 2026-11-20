@@ -20,6 +20,12 @@ pytest options
    * - ``--waves``
      - Dump waveforms from the start of each test, on platforms that can
        (see :ref:`waves`).
+   * - ``--pastel-quiet``
+     - Don't turn on pytest's live logging, which shows PASTEL's progress
+       as tests run. PASTEL never overrides live-logging settings you've
+       made yourself.
+   * - ``--pastel-no-timeout``
+     - Don't time tests out (see :ref:`timeouts`), for debugging interactively.
    * - ``--sim-launcher=<template>``
      - Run the simulator through a command: a prefix (``srun -p sim``) or a
        template with ``{cmd}`` (``ssh simbox {cmd}``). See
@@ -54,12 +60,71 @@ Verilator platform (``--platform=verilator``):
        are part of the model's identity, so changing them builds a new
        model.
 
+Xcelium (``--platform=xcelium``), VCS (``--platform=vcs``, experimental) and
+Questa (``--platform=questa``, experimental) have the same options, with their
+own names; see :doc:`../guides/simulators`.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--xcelium-workdir``, ``--vcs-workdir``, ``--questa-workdir``
+     - Where models are built (default ``.pastel/<platform>``).
+   * - ``--xrun``, ``--vcs``, ``--vsim``
+     - The simulator's executable. Questa's ``vlib``, ``vlog`` and ``vopt``
+       come from beside ``vsim``.
+   * - ``--xcelium-args``, ``--vcs-args``, ``--questa-args``
+     - Extra build arguments (elaboration, ``vcs``, ``vlog``), as one
+       shell-quoted string. Part of the model's identity.
+   * - ``--xcelium-build-prefix=<cmd>``
+     - Run Xcelium's elaboration under a command, e.g. ``srun -c 8``.
+
+FPGA platform (``--platform=fpga``) and debug probes:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Option
+     - Meaning
+   * - ``--fpga-program=<cmd>``
+     - A shell command that programs the FPGA, run once before the first test.
+   * - ``--jlink-serial=<sn>``
+     - The USB J-Link to use, by serial number (``jlink`` driver).
+   * - ``--jlink-ip=<addr>``
+     - A J-Link over IP, or a SEGGER tunnel
+       (``tunnel:<name or serial>[:<password>[:<server>[:<port>]]]``).
+   * - ``--jlink-backend=<name>``
+     - How the ``jlink`` driver talks to the probe: ``commander`` (J-Link
+       Commander) or ``pylink`` (SEGGER's library). Overrides the binding's
+       ``backend``.
+
 Markers
 -------
 
 ``@pytest.mark.requires(*capabilities)``
    Skip the test unless the harness offers every capability: interface
    instance names, or ``backdoor``, ``sim_time``, ``waves``.
+``@pytest.mark.pastel_timeout(chip_ms=, grace_s=, stall_s=)``
+   This test's time limit (see :ref:`timeouts`); ``chip_ms=None`` for none.
+
+Settings
+--------
+
+In ``[tool.pytest.ini_options]``, or for one run with ``-o name=value``:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Setting
+     - Meaning
+   * - ``pastel_timeout_chip_ms``
+     - Each test's time limit, in ms of chip time (default 100; ``none`` for no limit)
+   * - ``pastel_timeout_grace_s``
+     - Wall-clock seconds allowed after the chip time runs out (default 10)
+   * - ``pastel_timeout_stall_s``
+     - Wall-clock seconds simulation time may stand still before the simulator
+       counts as stuck (default 600; ``none`` never to check)
 
 Fixtures
 --------
@@ -104,6 +169,11 @@ Environment variables
      - Toolchain prefix (default ``riscv64-unknown-elf-``)
    * - ``PASTEL_OPENOCD``
      - OpenOCD executable (default ``openocd``)
+   * - ``PASTEL_JLINKEXE``
+     - J-Link Commander, for the ``jlink`` driver (default ``JLinkExe``)
+   * - ``PASTEL_JLINK_LIBRARY``
+     - SEGGER's J-Link library, for the ``jlink`` driver's ``pylink`` backend
+       (default: wherever pylink finds it)
    * - ``PASTEL_VEERWOLF_WORKSPACE``
      - Existing FuseSoC workspace for the VeeRwolf pack
 

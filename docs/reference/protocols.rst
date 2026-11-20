@@ -220,11 +220,12 @@ Carried on RTT channel 1. Each message is u8 id, u8 length, payload.
    * - HELLO
      - ``01``
      - target → host
-     - u8 protocol version (1)
+     - u8 protocol version (2)
    * - CHECKPOINT
      - ``02``
      - target → host
-     - u32 id
+     - u32 id, u8 wait. If wait is 1, the firmware blocks until HOST_ACK for
+       this id; the host acknowledges only checkpoints that wait.
    * - DATA
      - ``03``
      - target → host
@@ -241,6 +242,11 @@ Carried on RTT channel 1. Each message is u8 id, u8 length, payload.
      - ``06``
      - target → host
      - u8 enable; the host answers with HOST_WAVES
+   * - ERROR
+     - ``07``
+     - target → host
+     - UTF-8 text, not NUL-terminated: an error the firmware reported. The
+       test fails.
    * - HOST_DATA
      - ``81``
      - host → target

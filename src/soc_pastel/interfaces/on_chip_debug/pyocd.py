@@ -21,10 +21,10 @@ class PyOcd(OnChipDebug):
     def halt(self) -> None:  # noqa: D102
         raise NotImplementedError(_TODO)
 
-    def resume(self, pc: int | None = None) -> None:  # noqa: D102
+    def _resume(self, pc: int | None) -> None:
         raise NotImplementedError(_TODO)
 
-    def step(self) -> None:  # noqa: D102
+    def _step(self) -> None:
         raise NotImplementedError(_TODO)
 
     def state(self) -> TargetState:  # noqa: D102
@@ -40,8 +40,8 @@ class PyOcd(OnChipDebug):
     def memory(self) -> MemoryInterface:  # noqa: D102
         raise NotImplementedError(_TODO)
 
-    def add_breakpoint(self, addr: int, *, hardware: bool = True) -> int:  # noqa: D102
+    def _add_breakpoint(self, addr: int, *, hardware: bool) -> int:
         raise NotImplementedError(_TODO)
 
-    def remove_breakpoint(self, breakpoint_id: int) -> None:  # noqa: D102
+    def _remove_breakpoint(self, breakpoint_id: int) -> None:
         raise NotImplementedError(_TODO)

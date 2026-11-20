@@ -20,9 +20,22 @@ The API
    * - ``int test_main(void)``
      - Defined by each test. Return 0 to pass.
    * - ``pastel_printf(fmt, ...)``
-     - ``%d %i %u %x %X %p %s %c %%``, with ``0`` flag and width
+     - ``%d %i %u %x %X %p %s %c %%``, with ``0`` flag and width, and the
+       ``l``, ``h``, ``z``, ``t`` length modifiers, so ``%lu`` and ``PRIu32`` work.
+       ``ll`` (64-bit) isn't supported.
    * - ``pastel_puts(s)``
      - Print a line
+   * - ``PASTEL_INFO(fmt, ...)``
+     - Print a line (``pastel_printf`` plus a newline)
+   * - ``PASTEL_ERROR(fmt, ...)``
+     - Report an error and carry on. The test fails.
+   * - ``PASTEL_CHECK(expr)``, ``PASTEL_CHECK(expr, fmt, ...)``
+     - If ``expr`` is false, report ``file.c:12: CHECK failed: expr: message``
+       and carry on. The test fails.
+   * - ``PASTEL_ASSERT(expr)``, ``PASTEL_ASSERT(expr, fmt, ...)``
+     - Like ``PASTEL_CHECK``, then end the test at once
+   * - ``pastel_snprintf(buf, size, fmt, ...)``
+     - Format into a buffer
    * - ``pastel_checkpoint(id, wait)``
      - Report a checkpoint; if ``wait``, block until the host acknowledges
    * - ``pastel_waves(enable)``
@@ -30,10 +43,31 @@ The API
        1 if waves are being dumped (see :ref:`waves`)
    * - ``pastel_send(data, len)``
      - Send up to 255 bytes to the host test
+   * - ``pastel_receive(buf, capacity)``
+     - Wait for data the host test sends (``firmware.send()``); returns its
+       length. Data sent while the firmware waits at a checkpoint is kept, up to
+       ``PASTEL_HOST_DATA_QUEUE`` bytes (default 512), until it asks
+   * - ``pastel_receive_u32()``
+     - Wait for a 32-bit value the host sends (``firmware.send_u32()``)
    * - ``pastel_finish(result)``
      - End the test now with ``result`` (what returning from ``test_main`` does)
    * - ``pastel_read32(addr)``, ``pastel_write32(addr, v)``
      - Volatile register access
+
+Errors reach the host as they happen. They appear in the test's output at
+once, and fail the test even if ``test_main`` returns 0. Use ``PASTEL_CHECK``
+to check several things and see every failure, and ``PASTEL_ASSERT`` when going
+on makes no sense. An error message longer than 255 bytes is cut short.
+
+.. code-block:: c
+
+   int test_main(void) {
+     uint32_t id = pastel_read32(CHIP_ID);
+     PASTEL_ASSERT(id != 0, "no chip ID");
+     PASTEL_CHECK(id >> 16 == 0x1234, "vendor 0x%04x", id >> 16);
+     PASTEL_CHECK((id & 0xffff) >= 2, "revision %u too old", id & 0xffff);
+     return 0;
+   }
 
 There is no C library; ``memcpy``, ``memset``, ``memmove`` and ``memcmp`` are
 provided. Output goes into a buffer the host drains while the firmware runs,
@@ -91,7 +125,46 @@ from the header a SystemRDL flow generates rather than from hand-written
 
 Test firmware can then ``#include "my_chip_addrmap.h"``. The directories are
 searched after PASTEL's own headers, so they can't hide them, and before a
-test's ``include_dirs``. Changing any header in them rebuilds the firmware.
+test's ``include_dirs``.
+
+.. _how-firmware-is-built:
+
+How firmware is built
+---------------------
+
+**When:** each time a test calls ``firmware.build()`` or ``firmware.run()``.
+``firmware.run()`` builds first and only then touches the target, so the
+firmware is compiled before the simulator starts. A compile error fails the
+test in about a second, without starting a simulator or, with a farm
+launcher, submitting a job.
+
+**Where:** on the machine running pytest, into the test's run directory:
+
+.. code-block:: text
+
+   <run directory>/fw/<first source>-<code location>/
+       <first source>-<code location>.elf
+       build.log          the compiler command line, then its output
+       gen/memory_map.h   generated from the descriptor
+       gen/link.ld        generated from the code location
+
+**What:** one ``gcc`` call compiles and links PASTEL's runtime (start-up code,
+RTT, the mailbox, ``printf``) and the test's sources together. It uses:
+
+- ``-march``/``-mabi`` from the device's CPU, with ``-Os -g -Wall``
+- the generated ``memory_map.h``, included in every file
+- the include directories, searched in this order: the generated header, PASTEL's own,
+  the variant's ``fw_build`` hook, then the test's ``include_dirs``
+- the defines from the hook, then the test's
+
+**Nothing is cached.** Every build starts from scratch, so a test always runs
+firmware built from the sources and headers as they are now. A build takes
+about a second.
+
+**Errors and warnings:** a compile error fails the test with the compiler's
+messages and the path of ``build.log``. Warnings don't fail the test, but they
+are printed as soon as the build finishes, and ``build.log`` is listed if the
+test fails.
 
 Results and faults
 ------------------

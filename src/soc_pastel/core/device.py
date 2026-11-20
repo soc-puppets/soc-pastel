@@ -146,6 +146,10 @@ class Variant:
         params: Free-form build parameters the device pack's platform
             integration understands (FuseSoC flags, bitstream names, ...).
             The core never interprets them.
+        clock_mhz: The clock this build runs at, if not the device's own
+            (:attr:`Device.clock_mhz`): an FPGA build at 20 MHz, or a
+            testbench clocked slower than the chip. Test timeouts are in
+            chip time, so they stretch to match.
     """
 
     name: str
@@ -153,6 +157,7 @@ class Variant:
     code_locations: tuple[CodeLocation, ...]
     platforms: frozenset[str] = frozenset()
     params: Mapping[str, Any] = field(default_factory=dict)
+    clock_mhz: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "regions", tuple(self.regions))
@@ -190,6 +195,7 @@ class Variant:
                 )
         if not self.code_locations:
             raise ConfigurationError(f"variant {self.name!r} declares no code locations")
+        _check_clock(self.clock_mhz, f"variant {self.name!r}")
         for c in self.code_locations:
             text, data, rtt = (self.region(n) for n in (c.text, c.data, c.rtt_region))
             if Access.X not in text.access:
@@ -280,6 +286,9 @@ class Device:
         register_model: Optional ``"module:attribute"`` reference to a
             register-model factory. Devices without one simply lack ``regs``.
         hdl: FuseSoC VLNV of the device pack's testbench top, if it has one.
+        clock_mhz: The chip's own clock, e.g. ``1000`` for the ASIC at 1 GHz.
+            With a variant's :attr:`Variant.clock_mhz`, it says how much
+            slower that build runs than the chip (see :meth:`chip_speed`).
     """
 
     name: str
@@ -289,6 +298,16 @@ class Device:
     interfaces: Mapping[str, InterfaceBinding]
     register_model: str | None = None
     hdl: str | None = None
+    clock_mhz: float | None = None
+
+    def chip_speed(self, variant: Variant) -> float:
+        """How fast ``variant`` runs compared with the chip (its clock over the chip's).
+
+        1.0 unless both the device and the variant give a ``clock_mhz``.
+        """
+        if self.clock_mhz and variant.clock_mhz:
+            return variant.clock_mhz / self.clock_mhz
+        return 1.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "variants", MappingProxyType(dict(self.variants)))
@@ -329,6 +348,7 @@ class Device:
 
     def validate(self) -> None:
         """Check internal consistency; raise :class:`ConfigurationError` if broken."""
+        _check_clock(self.clock_mhz, f"device {self.name!r}")
         if self.default_variant not in self.variants:
             raise ConfigurationError(
                 f"device {self.name!r}: default variant {self.default_variant!r} not defined"
@@ -353,3 +373,8 @@ def _unique(names: Iterable[str], what: str) -> None:
         if n in seen:
             raise ConfigurationError(f"duplicate {what} name {n!r}")
         seen.add(n)
+
+
+def _check_clock(clock_mhz: float | None, what: str) -> None:
+    if clock_mhz is not None and not clock_mhz > 0:
+        raise ConfigurationError(f"{what}: clock_mhz must be positive, not {clock_mhz!r}")

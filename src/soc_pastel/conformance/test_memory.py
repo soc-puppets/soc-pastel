@@ -25,7 +25,7 @@ def test_debug_memory_round_trip(harness):
 @pytest.mark.requires("backdoor")
 def test_backdoor_and_debug_agree(harness):
     harness.ocd.reset(halt=True)
-    backdoor = harness.memory()
+    backdoor = harness.platform.backdoor()
     regions = [r for r in harness.variant.regions if r.backdoor]
     assert regions, "a platform with a backdoor should reach at least one region"
     for region in regions:

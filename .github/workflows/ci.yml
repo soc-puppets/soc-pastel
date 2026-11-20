@@ -53,13 +53,17 @@ jobs:
             ~/.cache/fusesoc
             .pastel/verilator
           key: verilator-${{ hashFiles('src/soc_pastel/sim/**', 'src/soc_pastel/interfaces/on_chip_debug/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/sim.py') }}
+      - name: Real Verilator builds (build-log errors and warnings)
+        run: pytest tests/test_sim_build_verilator.py
       - name: Conformance suite on VeeRwolf (Verilator, ${{ matrix.location }})
         run: >
           pytest --pyargs soc_pastel.conformance
           --device=veerwolf --platform=verilator --code-location=${{ matrix.location }}
-      - name: VeeRwolf pack's simulation tests (GPIO)
+      - name: VeeRwolf pack's simulation tests (GPIO, checkpoints, simulator errors, timeouts, started firmware)
         run: >
-          pytest packages/veerwolf/tests/test_gpio.py
+          pytest packages/veerwolf/tests/test_gpio.py packages/veerwolf/tests/test_checkpoints.py
+          packages/veerwolf/tests/test_sim_log_errors.py packages/veerwolf/tests/test_timeouts.py
+          packages/veerwolf/tests/test_started_firmware.py
           --device=veerwolf --platform=verilator --code-location=${{ matrix.location }}
       - uses: actions/upload-artifact@v4
         if: failure()

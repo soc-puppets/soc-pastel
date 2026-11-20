@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// PASTEL mailbox protocol, version 1.
+// PASTEL mailbox protocol, version 2.
 //
 // The mailbox runs over SEGGER RTT: up-channel 0 carries printf output, and
 // the mailbox uses up/down channel 1. Each message is
@@ -17,20 +17,21 @@
 
 #include <stdint.h>
 
-#define PASTEL_MBOX_VERSION 1u
+#define PASTEL_MBOX_VERSION 2u
 #define PASTEL_MBOX_RTT_CHANNEL 1u
 
 typedef enum {
   // Target -> host
   PASTEL_MBOX_HELLO      = 0x01,  // u8 version; firmware is up
-  PASTEL_MBOX_CHECKPOINT = 0x02,  // u32 checkpoint id
+  PASTEL_MBOX_CHECKPOINT = 0x02,  // u32 checkpoint id, u8 wait (1: blocks until HOST_ACK)
   PASTEL_MBOX_DATA       = 0x03,  // opaque test data
   PASTEL_MBOX_FINISH     = 0x04,  // i32 result: 0 = pass, anything else = fail
   PASTEL_MBOX_FAULT      = 0x05,  // u32 cause, u32 pc, u32 tval
   PASTEL_MBOX_WAVES      = 0x06,  // u8 enable; answered with HOST_WAVES
+  PASTEL_MBOX_ERROR      = 0x07,  // text (not NUL-terminated): an error; the test fails
   // Host -> target
   PASTEL_MBOX_HOST_DATA  = 0x81,  // opaque test data
-  PASTEL_MBOX_HOST_ACK   = 0x82,  // u32 checkpoint id being released
+  PASTEL_MBOX_HOST_ACK   = 0x82,  // u32 checkpoint id being released (waiting ones only)
   PASTEL_MBOX_HOST_WAVES = 0x83,  // u8: 1 if waves are now being dumped
 } pastel_mbox_id_t;
 

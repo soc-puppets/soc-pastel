@@ -24,8 +24,8 @@ interface: ``reset``, ``halt``, ``resume``, ``step``, ``state``, ``read_register
 ``write_register``, breakpoints, and ``memory`` for access through the debug port.
 
 ``harness.memory()`` returns the fastest
-:py:class:`~soc_pastel.core.memory.MemoryInterface`: the backdoor in
-simulation, on-chip debug otherwise. Addresses and lengths are always bytes;
+:py:class:`~soc_pastel.core.memory.MemoryInterface` for each address: the
+backdoor in simulation where one reaches that memory, on-chip debug otherwise. Addresses and lengths are always bytes;
 ``read32``, ``write32``, ``read_words`` and ``write_words`` are conveniences on top.
 
 Memory reachable only while halted
@@ -75,7 +75,10 @@ returns a :py:class:`~soc_pastel.fw.runner.FirmwareResult`:
    * - ``result``
      - ``test_main``'s return value
    * - ``passed``
-     - ``result == 0``
+     - ``result == 0`` and no ``errors``
+   * - ``errors``
+     - Errors the firmware reported (``PASTEL_ERROR``, a failed
+       ``PASTEL_CHECK`` or ``PASTEL_ASSERT``), in order
    * - ``output``
      - Everything printed with ``pastel_printf``
    * - ``checkpoints``
@@ -83,40 +86,279 @@ returns a :py:class:`~soc_pastel.fw.runner.FirmwareResult`:
    * - ``data``
      - Payloads sent with ``pastel_send``, in order
 
-An unexpected exception in the firmware raises
+If the firmware fails, ``firmware.run()`` fails the test with
+:py:class:`~soc_pastel.fw.runner.FirmwareFailed`. The message gives the
+result, every error the firmware reported, and the end of its output. A test
+that checks a failure passes ``expect_pass=False`` and gets the result back
+instead:
+
+.. code-block:: python
+
+   def test_bad_config_is_rejected(firmware):
+       result = firmware.run("fw/bad_config.c", expect_pass=False)
+       assert result.result == 3
+
+A firmware's errors are then logged as ``XERROR``, an *expected* error, rather
+than ``ERROR``, like pytest's ``xfail``.
+
+An exception in the firmware raises
 :py:class:`~soc_pastel.fw.runner.FirmwareFault`, with ``cause``, ``pc`` and
-``tval``. Not finishing within ``timeout_s`` (default 300 s, wall clock) raises
-:py:class:`~soc_pastel.core.errors.PastelTimeout`.
+``tval``. A test that expects one passes ``expect_fault=True``. The fault is
+then logged as ``XERROR`` and returned in ``result.fault``, and the test fails
+if the firmware finishes without one:
 
-Doing things at a known point
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: python
 
-A checkpoint pauses the firmware until the host has acted:
+   def test_illegal_instruction_traps(firmware):
+       result = firmware.run("fw/illegal.c", expect_fault=True)
+       assert result.fault.cause == 2
+
+PASTEL only knows an error is expected if the test says so in
+``firmware.run()``. Errors caught with ``pytest.raises`` are still logged as
+``ERROR``. A test that runs out of time fails with
+:py:class:`~soc_pastel.core.errors.PastelTimeout` (see :ref:`timeouts`).
+
+How a test passes or fails
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A test passes only if all of these hold:
+
+- **Its own assertions pass.** It's a pytest test.
+- **The firmware builds.** Errors fail the test with the compiler's messages.
+  Warnings are printed but don't fail it.
+- **The firmware passes:** ``test_main`` returns 0 and nothing reported an
+  error. ``firmware.run()`` checks this unless given ``expect_pass=False``.
+- **The firmware finishes in time and doesn't fault.**
+- **The model builds cleanly:** no errors in its build log.
+- **The simulation is clean:** once the test has finished, ``sim.log`` has no
+  error messages (``$error``, ``$fatal``, assertion failures, ``UVM_ERROR``,
+  ...) and the simulator exited successfully, apart from errors the test
+  expected with ``harness.expect_sim_error(pattern)``. See :doc:`simulators`.
+
+Doing things at a known point: checkpoints
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A *checkpoint* is the firmware telling the test "I've got this far". It
+carries a number you choose, the id. With ``wait`` set, the firmware also stops
+until the test says carry on, so the test can act at exactly that point:
+drive a pin, write a register, or look at memory, knowing the firmware isn't
+running past it.
 
 .. code-block:: c
 
-   pastel_checkpoint(1, 1);   // id 1; wait for the host
+   pastel_checkpoint(1, 1);   // id 1; wait for the test
+   pastel_checkpoint(2, 0);   // id 2; don't wait: just a marker
+
+On the test side, ``firmware.run(..., on_checkpoint=f)`` calls ``f(id)`` for
+each checkpoint, in order, and the ids end up in ``result.checkpoints``. When
+the firmware waits, ``f`` runs while it waits, and the firmware carries on
+only once ``f`` has returned:
+
+.. code-block:: text
+
+   firmware                            test (on_checkpoint)
+   --------                            --------------------
+   pastel_checkpoint(1, 1)  ───────▶   on_checkpoint(1) runs: drive pins,
+     ...waits...                       read and write memory, check things
+                            ◀───────   on_checkpoint(1) returns
+   carries on
+
+If ``f`` raises (a failed ``assert``, say), the test fails there. A checkpoint
+that doesn't wait still calls ``f``, but the firmware may be well past it by
+then.
+
+Each example below is a real test, in
+``packages/veerwolf/tests/test_checkpoints.py`` with its firmware in
+``packages/veerwolf/tests/fw/``.
+
+**1. Stimulus at a known point.** The firmware checks a "button" is up, waits
+while the test presses it, then checks it sees the press:
+
+.. code-block:: c
+
+   PASTEL_CHECK((pastel_read32(GPIO) & BUTTON) == 0, "button pressed too early");
+   pastel_checkpoint(1, 1);  // wait: the test presses the button, then lets us go
+   PASTEL_CHECK(pastel_read32(GPIO) & BUTTON, "button press not seen");
 
 .. code-block:: python
 
-   def test_interrupt(firmware):
+   def test_press_a_button_while_the_firmware_waits(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+
        def on_checkpoint(cp):
            if cp == 1:
-               firmware.harness.memory().write32(TRIGGER, 1)
+               gpio.drive(BUTTON, BUTTON)
 
-       assert firmware.run("fw/interrupt.c", on_checkpoint=on_checkpoint).passed
+       firmware.run("fw/cp_stimulus.c", on_checkpoint=on_checkpoint)
 
-To share variables between firmware and host, build first and look up the
-symbol:
+The firmware does the checking here, so the test needs no assertion:
+``firmware.run()`` fails the test if a ``PASTEL_CHECK`` fails.
+
+**2. Inspecting the chip at a known point.** The firmware computes a value,
+puts it on the output pins and waits while the test checks both the variable
+and the pins. ``firmware.symbol(name)`` gives a firmware variable's address:
+
+.. code-block:: c
+
+   volatile uint32_t total;
+
+   int test_main(void) {
+     for (uint32_t i = 1; i <= 10; i++) total += i;
+     pastel_write32(GPIO, total);
+     pastel_checkpoint(1, 1);
+     return 0;
+   }
 
 .. code-block:: python
 
-   from soc_pastel.core.loader import elf_symbol
+   def on_checkpoint(cp):
+       with harness.ocd.halted():
+           assert harness.memory().read32(firmware.symbol("total")) == 55
+       assert gpio.sample() & 0xFFFF == 55
 
-   elf = firmware.build("fw/shared.c")
-   addr = elf_symbol(elf, "shared_buffer")
+``harness.memory()`` reaches the variable wherever it lives: through the
+backdoor if there is one for that memory, otherwise through on-chip debug.
+Some memories can only be reached through debug while the CPU is halted, such
+as VeeR's DCCM at the ``ccm`` code location. ``harness.ocd.halted()`` halts the
+CPU for the block and resumes it afterwards, which is harmless while the
+firmware waits.
 
-then run it with :py:func:`~soc_pastel.fw.runner.run_firmware`.
+**3. Progress markers.** Checkpoints that don't wait record how far the
+firmware got, for checking afterwards:
+
+.. code-block:: python
+
+   result = firmware.run("fw/cp_progress.c")
+   assert result.checkpoints == [10, 20, 30]
+
+**4. A conversation.** One step per checkpoint, keyed on the id. At each step
+the test checks the firmware's answer to the last command and gives it the
+next one, through two firmware variables:
+
+.. code-block:: c
+
+   volatile uint32_t command, answer;
+
+   int test_main(void) {
+     for (uint32_t step = 1; step <= 3; step++) {
+       pastel_checkpoint(step, 1);   // wait for the test's command
+       answer = command * command;
+     }
+     pastel_checkpoint(4, 1);        // let the test check the last answer
+     return 0;
+   }
+
+.. code-block:: python
+
+   def on_checkpoint(cp):
+       with harness.ocd.halted():
+           mem = harness.memory()
+           if cp > 1:   # the firmware has answered the previous command
+               sent = cp - 1 + 10
+               assert mem.read32(firmware.symbol("answer")) == sent * sent
+           if cp <= 3:
+               mem.write32(firmware.symbol("command"), cp + 10)
+
+**5. Sending the firmware data.** ``firmware.send(data)`` (up to 255 bytes)
+and ``firmware.send_u32(value)``, called from ``on_checkpoint``, send data the
+firmware takes with ``pastel_receive()`` and ``pastel_receive_u32()``. It needs
+no firmware variables, and works where the firmware isn't halted for debug
+access:
+
+.. code-block:: c
+
+   int test_main(void) {
+     pastel_checkpoint(1, 1);                 // the test sends its parameters
+     uint32_t n_samples = pastel_receive_u32();
+     ...
+   }
+
+.. code-block:: python
+
+   def on_checkpoint(cp):
+       if cp == 1:
+           firmware.send_u32(16)
+
+Data sent while the firmware waits at a checkpoint is kept until it asks for
+it, and messages arrive in the order sent.
+
+Things to know:
+
+- Ids are yours to choose, and may repeat. A marker and a waiting checkpoint
+  with the same id don't interfere.
+- A waiting checkpoint blocks the firmware's main code. Interrupt handlers
+  still run.
+- Firmware time keeps passing in the simulation while the test acts, except
+  inside ``harness.ocd.halted()``.
+
+Acting while the firmware runs: ``firmware.start()``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``firmware.run()`` waits until the firmware finishes, and the test acts only in
+``on_checkpoint``. Most tests fit that. A few don't:
+
+- firmware that never finishes, such as a main loop to stop at breakpoints;
+- a test that keeps acting while the firmware runs, such as driving a pin the
+  firmware is measuring;
+- a test with several steps that reads better as one sequence than as a
+  callback keyed on checkpoint ids.
+
+``firmware.start()`` builds, loads and starts the firmware, and returns at once
+with a :py:class:`~soc_pastel.fw.runner.FirmwareRun`. The firmware's output,
+errors and faults are still reported as it runs, and the time limit still
+applies, while the test carries on and keeps in step with these:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Call
+     - Does
+   * - ``run.wait_checkpoint(id)``
+     - Wait until the firmware reports checkpoint ``id``. Each call takes one
+       report, so a repeated id is waited for again
+   * - ``with run.at_checkpoint(id):``
+     - Wait for it; if it waits, the firmware is held until the block ends
+   * - ``run.release(id)``
+     - Let the firmware go on from waiting checkpoint ``id``
+   * - ``run.send(data)``, ``run.send_u32(v)``
+     - Send data, as ``firmware.send()`` does
+   * - ``run.wait()``
+     - Let the firmware run to the end, releasing every checkpoint; return its
+       result, failing as ``firmware.run()`` would
+   * - ``run.stop()``
+     - Stop following firmware that won't finish by itself; return what it
+       produced so far
+   * - ``harness.ocd.wait_halted()``
+     - Wait until the CPU halts, e.g. at a breakpoint; return the PC
+
+.. code-block:: python
+
+   def test_counts_edges(harness, firmware):
+       gpio = harness.iface("gpio", Gpio)
+       run = firmware.start("fw/count_edges.c")
+       run.wait_checkpoint(1)               # the firmware has started counting
+       for _ in range(200):
+           gpio.drive(PIN, PIN)
+           gpio.release(PIN)
+       result = run.wait()
+       assert result.data == [(200).to_bytes(4, "little")]
+
+.. code-block:: python
+
+   def test_stops_at_a_breakpoint(harness, firmware):
+       ocd = harness.ocd
+       run = firmware.start("fw/main_loop.c")
+       with run.at_checkpoint(1), ocd.halted():  # breakpoints need a halted CPU
+           ocd.add_breakpoint(firmware.symbol("handle_event"))
+       assert ocd.wait_halted() == firmware.symbol("handle_event")
+       run.stop()
+
+A waiting checkpoint holds the firmware until the test lets it go. Waiting for
+something else meanwhile waits until the time limit, and PASTEL warns when it
+sees that happening. A run the test neither waits for nor stops is stopped when
+the test ends, and a fault or error it reported still fails the test.
+``on_checkpoint`` belongs to ``firmware.run()`` only; with ``start()``, act in
+the test itself.
 
 Build options
 ~~~~~~~~~~~~~
@@ -127,9 +369,9 @@ Build options
 pack provides for every test, such as the chip's register map, come from the
 variant's ``fw_build`` hook (see :doc:`firmware`), so tests don't name them.
 
-Builds are cached under ``.pastel/firmware/`` by everything that goes into
-them: the sources, the headers in every include directory, the defines and
-the generated memory map. Regenerating a header rebuilds the firmware.
+Firmware is built from scratch every time a test builds or runs it, into the
+test's run directory, so a test never runs stale code; see
+:ref:`how-firmware-is-built`.
 
 Code locations
 ~~~~~~~~~~~~~~
@@ -160,6 +402,61 @@ skipped elsewhere:
 Capabilities are interface instance names from the device descriptor
 (``"spi0"``, ``"gpio"``) and platform features: ``"backdoor"``, ``"sim_time"``,
 ``"waves"``.
+
+.. _timeouts:
+
+Time limits
+-----------
+
+Every test has a time limit, in **chip time**: how long its work would take on
+the chip itself, at its own clock. The same limit then suits every platform:
+
+- a simulator measures simulation time;
+- silicon measures wall-clock time;
+- an FPGA build measures wall-clock time too, stretched by how much slower it
+  runs than the chip. A device whose ``clock_mhz`` is 1000, built for an FPGA
+  at ``clock_mhz=20``, gets 50 times as long (see :doc:`device-pack`).
+
+A test times out once its chip time has passed the limit **and** a further
+grace period of wall-clock time has gone by. The grace covers what doesn't get
+faster on a faster platform: debug transfers, loading firmware over JTAG, the
+test's own Python. It is negligible next to a simulation and generous on
+hardware. The clock starts when the target is up and on-chip debug connected,
+so building and queueing don't count.
+
+A simulation whose time stops advancing (a hung simulator) also times out,
+after ``pastel_timeout_stall_s`` of wall-clock time.
+
+When a test times out, PASTEL stops the platform, so whatever the test was
+waiting for fails, and the test fails with the reason::
+
+    E   PastelTimeout: timed out: the test took more than 100 ms of chip time, plus 10 s grace
+
+The defaults suit most tests: 100 ms of chip time, 10 s grace, 10 minutes for
+a stalled simulation. Change them for a suite in ``pyproject.toml``:
+
+.. code-block:: toml
+
+   [tool.pytest.ini_options]
+   pastel_timeout_chip_ms = 100
+   pastel_timeout_grace_s = 10
+   pastel_timeout_stall_s = 600
+
+or for one run with ``-o pastel_timeout_chip_ms=500``. For one test, use the
+marker, where ``chip_ms=None`` means no limit:
+
+.. code-block:: python
+
+   @pytest.mark.pastel_timeout(chip_ms=2000)
+   def test_coremark(firmware): ...
+
+``firmware.run(chip_ms=...)`` gives a firmware run its own limit, counted from
+when the firmware starts. ``timeout_s=`` adds a plain wall-clock limit.
+``--pastel-no-timeout`` turns time limits off, for debugging interactively.
+
+Only waits PASTEL does itself (``firmware.run()``, a started run's waits,
+``ocd.wait_halted()``) notice a timeout straight away. A test that loops in its
+own Python finds out when it next touches the target.
 
 .. _waves:
 
@@ -243,4 +540,40 @@ Running tests
    pytest tests/ --device=<device> --platform=<platform> -n 8   # in parallel
 
 Each test's logs (``sim.log``, ``openocd.log``, ``openocd.cfg``) are in its pytest
-temporary directory; pytest prints its path when a test fails.
+temporary directory, its *run directory*.
+
+What a run shows
+~~~~~~~~~~~~~~~~
+
+PASTEL logs each step of a test, and turns on pytest's live logging, so you
+see them as they happen. With ``-v``, each test's lines sit under its name,
+with its result after them:
+
+.. code-block:: text
+
+   src/soc_pastel/conformance/test_firmware.py::test_hello
+   -------------------------------- live log call ---------------------------------
+   INFO    built hello-ram.elf in 0.3 s
+   INFO    simulator started; run directory /tmp/pytest-of-me/pytest-7/test_hello0
+   INFO    simulator connected after 0.4 s
+   INFO    OpenOCD ready (riscv.cpu) after 1.2 s
+   INFO    loaded hello-ram.elf (1832 bytes via backdoor) in 0.0 s
+   INFO    running hello-ram.elf from 0x0
+   INFO    fw: Hello from veerwolf (sim)
+   INFO    checkpoint 1 (waiting)
+   INFO    firmware finished: test_main returned 0
+   PASSED                                                                   [ 50%]
+
+Model builds, warnings and errors appear the same way. This is pytest's own
+live logging. If your configuration already sets it (``log_cli``,
+``--log-cli-level``, ``log_cli_format``), PASTEL leaves your settings alone,
+and ``--pastel-quiet`` stops PASTEL turning it on at all.
+
+A failing test's report gets a **PASTEL: where to look** section: the test's
+run directory, the logs in it, and the model's build log. The end of the run
+lists the run directories of every failing test, and each test's waveform if
+``--waves`` was given. To see failures as they happen rather than at the end,
+add the ``pytest-instafail`` plugin and pass ``--instafail``.
+
+Under pytest-xdist (``-n``), workers can't show live logs, but the failure
+sections and the summary still appear.

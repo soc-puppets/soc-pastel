@@ -24,9 +24,10 @@ from .device import ON_CHIP_DEBUG, Device, Variant
 from .endpoints import EndpointBacked, ExpectedEndpoint
 from .errors import CapabilityError
 from .interface import Interface
-from .memory import MemoryInterface
+from .memory import MemoryInterface, RoutedMemory
 from .on_chip_debug import OnChipDebug
 from .platform import Platform, SimulationPlatform
+from .timeout import Watchdog
 
 T = TypeVar("T", bound=Interface)
 
@@ -59,6 +60,10 @@ class PlatformHarness:
         self._platform = platform
         self._state = "new"  # -> "opening" -> "open" -> "closed"
         self._started = False  # platform.start() has been called
+        #: Patterns of simulator errors the test expects (see :meth:`expect_sim_error`).
+        self.expected_sim_errors: list[str] = []
+        #: The test's time limit, in chip time (see :mod:`soc_pastel.core.timeout`).
+        self.timeout = Watchdog(self)
         self._interfaces: dict[str, Interface] = {
             name: cls(name, cfg, self) for name, (cls, cfg) in interfaces.items()
         }
@@ -67,6 +72,21 @@ class PlatformHarness:
         self._open: list[Interface] = []
         if not isinstance(self._interfaces.get(ON_CHIP_DEBUG), OnChipDebug):
             raise CapabilityError(f"harness needs an {ON_CHIP_DEBUG!r} interface")
+
+    def expect_sim_error(self, pattern: str) -> None:
+        """Say the simulation should report an error matching ``pattern`` (a regex).
+
+        When the test ends, errors in the simulator's log that match are logged
+        as expected (XERROR) instead of failing the test, and so is a failing
+        exit status that follows them. The test fails if no error matches, or
+        if any other error appears. Call it more than once to expect several.
+        """
+        self.expected_sim_errors.append(pattern)
+
+    @property
+    def started(self) -> bool:
+        """True once the platform has been started (even if it has since stopped)."""
+        return self._started
 
     @property
     def platform(self) -> Platform:
@@ -127,16 +147,18 @@ class PlatformHarness:
     # -- Memory and registers -------------------------------------------------
 
     def memory(self, *, prefer_backdoor: bool = True) -> MemoryInterface:
-        """Return the best memory interface.
+        """Return the fastest way to reach any address.
 
-        The backdoor when the platform has one and ``prefer_backdoor`` is set,
-        otherwise memory access through on-chip debug.
+        With a backdoor (simulation) and ``prefer_backdoor`` set, each access
+        goes through the backdoor if it reaches that address and through
+        on-chip debug otherwise. Without one, or with ``prefer_backdoor=False``,
+        everything goes through on-chip debug.
         """
         self._open_on_first_use()
         if prefer_backdoor:
             backdoor = self._platform.backdoor()
             if backdoor is not None:
-                return backdoor
+                return RoutedMemory(backdoor, self.ocd.memory)
         return self.ocd.memory
 
     @property
@@ -183,6 +205,7 @@ class PlatformHarness:
             self.close()
             raise
         self._state = "open"
+        self.timeout.start()
 
     def close(self) -> None:
         """Close interfaces in reverse order, then stop the platform. Idempotent.
@@ -190,6 +213,7 @@ class PlatformHarness:
         A harness that was never opened has nothing to stop.
         """
         self._state = "closed"
+        self.timeout.stop()
         if not self._started:
             return
         errors: list[BaseException] = []

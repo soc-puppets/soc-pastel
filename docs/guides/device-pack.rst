@@ -205,6 +205,23 @@ its kind (``sim``, ``fpga``, ``silicon``), then falls back to ``default_variant`
 ``--variant`` overrides it. A variant can serve several kinds, e.g.
 ``platforms={"sim", "silicon"}`` when simulation runs the ASIC's memory map.
 
+Clocks
+~~~~~~
+
+Tests' time limits are in chip time (see :ref:`timeouts`). Give the chip's own
+clock on the device, and the clock of any build that runs slower, in MHz;
+fractions are fine:
+
+.. code-block:: python
+
+   MY_CHIP = Device(name="my_chip", clock_mhz=1000, ...)       # the ASIC: 1 GHz
+   FPGA = Variant(name="fpga", platforms={"fpga"}, clock_mhz=12.5, ...)
+
+An FPGA build at 12.5 MHz of a 1 GHz chip then gets 80 times as long as the
+chip would. A variant without ``clock_mhz`` runs at the chip's speed. Give the
+simulation variant one too if the testbench clocks the design slower than the
+chip runs.
+
 Interfaces: on-chip debug
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -450,6 +467,24 @@ which other simulators ignore. Arguments for one simulator only go in
 VeeRwolf's hook uses it to let FuseSoC generate the VeeR configuration and
 resolve dependencies; see ``soc_pastel_veerwolf/sim.py``.
 
+.. _log-rules:
+
+Build and run logs are checked for errors and warnings (see
+:doc:`simulators`). If the testbench prints its own error messages, or a
+simulator warns about something harmless, add rules in ``SimSources``. Each
+entry is a regular expression searched per line:
+
+.. code-block:: python
+
+   from soc_pastel.sim.logcheck import LogRules
+
+   return SimSources(
+       top="my_chip_tb",
+       args=tuple(args),
+       run_log=LogRules(errors=(r"^TB ERROR:",), ignore=(r"\*W,CUVWSP .*u_pad_ring",)),
+       build_log=LogRules(ignore=(r"%Warning-UNOPTFLAT",)),
+   )
+
 If the sources differ between simulators, for example a behavioural model
 that only one simulator can compile, give the hook a ``platform`` keyword
 argument. PASTEL then passes the platform's name, so one variant serves every
@@ -519,6 +554,37 @@ whose memory map differs, and on-chip debug bindings for the ``fpga`` and
 ``silicon`` kinds (or for particular boards, by variant name). Other
 interfaces are bound the same way, per platform: GPIO now, SPI and UART as
 their interface packs become available.
+
+``--platform=fpga`` runs on an FPGA board that is powered and connected
+through a debug probe. ``--fpga-program=<command>`` runs a command that loads
+the bitstream, once per session. A variant for the FPGA lists its memory
+without ``backdoor`` names (there is no simulator to reach in), and its debug
+binding names the probe: OpenOCD with an inline ``transport`` for the cable,
+as VeeRwolf's FPGA variant does, or a SEGGER J-Link:
+
+.. code-block:: python
+
+   "on_chip_debug": InterfaceBinding(type="on_chip_debug", impls={
+       "sim": {...},
+       "fpga": {"impl": "jlink", "device": "RISC-V", "interface": "JTAG", "speed": 4000},
+   }),
+
+The ``jlink`` driver talks to the probe in one of two ways, its *backend*:
+
+- ``commander`` (the default) runs SEGGER's J-Link Commander (``JLinkExe``)
+  and parses its replies.
+- ``pylink`` calls SEGGER's J-Link library directly, through pylink.
+
+Both need SEGGER's J-Link software, plus ``pip install "soc-pastel[jlink]"``.
+They behave the same, so a binding can set ``"backend": "pylink"`` or leave the
+default, and ``--jlink-backend`` picks the other at run time. Pick a probe with
+``--jlink-serial`` (USB) or ``--jlink-ip`` (over IP, or a SEGGER tunnel). The
+probe software's output goes to ``jlink.log`` in the test's run directory. See
+:mod:`soc_pastel.interfaces.on_chip_debug.jlink` for every option.
+
+On hardware, firmware loads and RTT is read through the probe, so a code
+location's ``rtt`` region must be readable while the CPU runs. Tests that need
+a backdoor, simulation time or waves are skipped.
 
 Checklist
 ---------
