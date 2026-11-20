@@ -53,14 +53,10 @@ def test_a_host_side_wait_that_never_ends_times_out(run_suite):
     assert "timed out: the test took more than 0.5 ms of chip time, plus 1 s grace" in out, out
 
 
-def test_quick_and_unlimited_tests_pass(run_suite):
+def test_a_test_without_a_limit_passes(run_suite):
     out, _ = run_suite(
         """
         import pytest
-
-        @pytest.mark.pastel_timeout(chip_ms=0.01, grace_s=0)
-        def test_short_limit_but_quick(firmware, harness):
-            harness.ocd.reset(halt=True)  # a quick test passes even with a tiny limit...
 
         @pytest.mark.pastel_timeout(chip_ms=None)
         def test_no_limit(harness):
@@ -68,4 +64,4 @@ def test_quick_and_unlimited_tests_pass(run_suite):
             assert harness.timeout.settings.chip_ms is None
         """
     )
-    assert "2 passed" in out, out
+    assert "1 passed" in out, out

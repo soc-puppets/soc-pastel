@@ -214,6 +214,10 @@ class FirmwareRun:
     :attr:`result` is what the firmware has produced so far.
     """
 
+    #: Seconds a wait may stand while the firmware is held at a waiting
+    #: checkpoint before a warning says so.
+    HELD_WARNING_S = 2.0
+
     def __init__(
         self,
         harness: PlatformHarness,
@@ -427,7 +431,7 @@ class FirmwareRun:
                     raise TargetError(f"the firmware finished before {what}")
                 held = [struct.unpack("<I", ack)[0] for ack in self._held]
                 self._cv.wait(0.05)
-            if held and not warned and time.monotonic() - began > 2:
+            if held and not warned and time.monotonic() - began > self.HELD_WARNING_S:
                 warned = True  # the commonest way to wait for ever: say so
                 log.warning(
                     "waiting for %s, but the firmware is held at waiting checkpoint %s "
