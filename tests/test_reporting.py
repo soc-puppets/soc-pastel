@@ -128,3 +128,18 @@ def test_progress_and_failures_reach_a_real_terminal(tmp_path):
     out = run_in_terminal(tmp_path, "-v")
     assert "INFO    simulator started; run directory /somewhere" in out
     assert "PASTEL: where to look" in out and "  sim.log" in out
+
+
+def test_where_to_look_lists_the_command_and_how_to_repeat_the_run(tmp_path):
+    from soc_pastel.reporting import MODEL_LOG, REPLAY, RUN_DIR, where_to_look
+
+    (tmp_path / "sim.log").write_text("")
+    (tmp_path / "sim.cmd").write_text("Vtb +pastel_host=...\n")
+    props = [
+        (RUN_DIR, str(tmp_path)),
+        (MODEL_LOG, "/models/tb/build.log"),
+        (REPLAY, "--verilator-seed=1234"),
+    ]
+    text = where_to_look(props)
+    assert "  sim.cmd" in text and "  sim.log" in text
+    assert text.endswith("repeat with: --verilator-seed=1234")

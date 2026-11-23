@@ -199,5 +199,6 @@ def test_verilator_starts_with_random_values_and_logs_the_seed(platform, caplog)
 def test_verilator_seed_and_zero(platform):
     platform.options["verilator_seed"] = 42
     assert platform.run_plusargs() == ["+verilator+rand+reset+2", "+verilator+seed+42"]
+    assert platform.replay_options == ("--verilator-seed=42",)  # shown when a test fails
     platform.options["verilator_init"] = "zero"
     assert platform.run_plusargs() == []

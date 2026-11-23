@@ -327,6 +327,12 @@ class SimulatorPlatform(SimulationPlatform):
 
     #: Waveform file written to the run directory when waves are enabled.
     WAVES_FILE: ClassVar[str] = "sim.vcd"
+    #: The simulator's command line (the model and its plusargs), written to
+    #: the run directory for each run.
+    COMMAND_FILE: ClassVar[str] = "sim.cmd"
+    #: pytest options that repeat this run exactly (e.g. a random seed), set
+    #: by :meth:`run_plusargs` and shown in a failing test's report.
+    replay_options: tuple[str, ...] = ()
     #: Sidecar list written to the run directory for ``+pastel_sidecars``.
     SIDECARS_FILE: ClassVar[str] = "sidecars.tsv"
     #: The simulator's output, in the run directory.
@@ -437,6 +443,7 @@ class SimulatorPlatform(SimulationPlatform):
                 f"\n  ... and {more} more" if more > 0 else "",
             )
         self._ran = True
+        self.replay_options: tuple[str, ...] = ()
         self.exit_status = None
         self._forced = False
         remote = self._launcher.remote
@@ -456,6 +463,7 @@ class SimulatorPlatform(SimulationPlatform):
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
         args += [*self.run_plusargs(), *self.option_args("sim_plusargs")]
+        (run_dir / self.COMMAND_FILE).write_text(shlex.join(args) + "\n")
         self._proc = self._launcher.launch(args, run_dir, self._log)
         log.info("simulator started; run directory %s", run_dir)
         began = time.monotonic()

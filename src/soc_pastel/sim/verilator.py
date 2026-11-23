@@ -157,6 +157,7 @@ class VerilatorPlatform(SimulatorPlatform):
             seed,
             seed,
         )
+        self.replay_options = (f"--verilator-seed={seed}",)
         return ["+verilator+rand+reset+2", f"+verilator+seed+{seed}"]
 
     def make_image(self, sources: SimSources) -> VerilatorImage:  # noqa: D102
