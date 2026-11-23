@@ -35,16 +35,8 @@ On Ubuntu 24.04:
 Install and run the conformance suite
 -------------------------------------
 
-Until the first release on PyPI, install from the repository.
-
-**Step 1: clone the repository.**
-
-.. code-block:: shell
-
-   git clone https://github.com/soc-puppets/soc-pastel.git
-   cd soc-pastel
-
-**Step 2: create and activate a virtual environment.**
+**Step 1: create and activate a virtual environment.** In the directory you'll
+work in, e.g. your chip's test directory:
 
 .. code-block:: shell
 
@@ -54,41 +46,49 @@ Until the first release on PyPI, install from the repository.
 The virtual environment keeps PASTEL and its dependencies out of your system
 Python. The first command creates it once, in ``.venv``; ``--upgrade-deps``
 also upgrades the environment's ``pip`` to the latest release, because the one
-bundled with an older Python can be too old for step 3. The second selects it
-for the current shell, so run it again in every new terminal before using
-``pytest`` or ``pastel``. (In csh or tcsh, source ``.venv/bin/activate.csh``
-instead.)
+bundled with an older Python can be too old. The second selects it for the
+current shell, so run it again in every new terminal before using ``pytest``
+or ``pastel``. (In csh or tcsh, source ``.venv/bin/activate.csh`` instead.)
 
 .. note::
 
    The environment uses whichever Python created it, and PASTEL needs 3.10 to
    3.13. If ``python3 --version`` reports anything else, name a suitable
-   interpreter explicitly, e.g. ``python3.12 -m venv --upgrade-deps .venv``. Too old a Python
-   makes step 3 fail with a message about editable mode needing a
-   setuptools-based build; Python 3.15 installs but makes step 5 fail when
-   FuseSoC starts (see :doc:`guides/troubleshooting`).
+   interpreter explicitly, e.g. ``python3.12 -m venv --upgrade-deps .venv``.
+   With too old a Python, step 2 finds no matching version of PASTEL; Python
+   3.15 installs but makes step 4 fail when FuseSoC starts (see
+   :doc:`guides/troubleshooting`).
 
-**Step 3: install the PASTEL core.**
-
-.. code-block:: shell
-
-   pip install -e .
-
-``-e`` installs in *editable* mode: Python uses the sources in your checkout
-directly, so changes take effect without reinstalling. Reinstall only when a
-``pyproject.toml`` changes.
-
-**Step 4: install a device pack.**
+**Step 2: install PASTEL** from `PyPI <https://pypi.org/project/soc-pastel/>`_:
 
 .. code-block:: shell
 
-   pip install -e packages/veerwolf
+   pip install soc-pastel
 
-This is the pack for the VeeRwolf reference SoC, which lives in this
-repository. ``pastel list`` should now show the ``veerwolf`` device and the
-platforms it can run on.
+Add extras for what you'll use, e.g. ``pip install "soc-pastel[jlink]"`` for
+SEGGER J-Link probes. ``pastel list`` should now show the platforms.
 
-**Step 5: run the conformance suite.**
+**Step 3: install a device pack.** Your chip's pack, from its repository
+(see :doc:`guides/device-pack`):
+
+.. code-block:: shell
+
+   pip install -e path/to/my-chip-pastel
+
+Or, to try PASTEL out first, the pack for the VeeRwolf reference SoC. It isn't
+on PyPI; install it from PASTEL's repository, at the release you installed
+(``pip show soc-pastel`` gives the version):
+
+.. code-block:: shell
+
+   pip install "soc-pastel-veerwolf @ git+https://github.com/soc-puppets/soc-pastel.git@v0.1.0#subdirectory=packages/veerwolf"
+
+``pastel list`` should now show the device as well.
+
+To work on PASTEL itself, clone the repository and install it in editable
+mode instead; see ``CONTRIBUTING.md``.
+
+**Step 4: run the conformance suite.**
 
 .. code-block:: shell
 
