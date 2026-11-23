@@ -132,6 +132,10 @@ def linker_script(variant: Variant, location: CodeLocation, stack_size: int) -> 
     ``location.data`` (text regions may be execute-only, e.g. an ICCM); the
     RTT control block and buffers in ``location.rtt_region``, which should be
     a memory the host can read while the CPU runs.
+
+    The sections the loader writes (``.text``, ``.rodata``, ``.data``) start
+    and end on 8-byte boundaries, padded with zeros, so loading only ever
+    writes whole words: memory with ECC can't be read before it is written.
     """
     roles = {"TEXT": location.text, "DATA": location.data, "RTT": location.rtt_region}
     regions = {name: variant.region(name) for name in dict.fromkeys(roles.values())}
@@ -158,9 +162,12 @@ MEMORY
 {aliases}
 SECTIONS
 {{
-  .text : {{ KEEP(*(.text.init)) *(.text .text.*) }} > TEXT
-  .rodata : ALIGN(4) {{ *(.rodata .rodata.* .srodata .srodata.*) }} > DATA
-  .data : ALIGN(4) {{ *(.data .data.*) *(.sdata .sdata.*) }} > DATA
+  /* Loaded sections start and end on 8-byte boundaries, padded with zeros,
+     so loading writes whole words and never reads one first: memory with
+     ECC (VeeR's ICCM and DCCM) can't be read until it has been written. */
+  .text : ALIGN(8) {{ KEEP(*(.text.init)) *(.text .text.*) . = ALIGN(8); }} > TEXT
+  .rodata : ALIGN(8) {{ *(.rodata .rodata.* .srodata .srodata.*) . = ALIGN(8); }} > DATA
+  .data : ALIGN(8) {{ *(.data .data.*) *(.sdata .sdata.*) . = ALIGN(8); }} > DATA
   __global_pointer$ = ADDR(.data) + 0x800;
   .bss (NOLOAD) : ALIGN(4) {{
     __bss_start = .;
@@ -168,8 +175,17 @@ SECTIONS
     . = ALIGN(4);
     __bss_end = .;
   }} > DATA
-  .stack (NOLOAD) : ALIGN(16) {{ . += {stack_size}; __stack_top = .; }} > DATA
-  .rtt (NOLOAD) : ALIGN(4) {{ KEEP(*(.rtt .rtt.*)) }} > RTT
+  .stack (NOLOAD) : ALIGN(16) {{
+    __stack_bottom = .;
+    . += {stack_size};
+    __stack_top = .;
+  }} > DATA
+  .rtt (NOLOAD) : ALIGN(4) {{
+    __rtt_start = .;
+    KEEP(*(.rtt .rtt.*))
+    . = ALIGN(4);
+    __rtt_end = .;
+  }} > RTT
   /DISCARD/ : {{ *(.comment) *(.riscv.attributes) }}
 }}
 """

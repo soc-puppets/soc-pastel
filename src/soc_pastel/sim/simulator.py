@@ -370,6 +370,14 @@ class SimulatorPlatform(SimulationPlatform):
             self._image = self.make_image(sources)
         return self._image
 
+    def run_plusargs(self) -> list[str]:
+        """Plusargs this simulator adds to each run (beyond PASTEL's own).
+
+        Called once per run, as the simulator starts. ``--sim-plusargs`` are
+        added after these.
+        """
+        return []
+
     def option_args(self, name: str) -> tuple[str, ...]:
         """A shell-quoted string option (``--<platform>-args``) as arguments."""
         return tuple(shlex.split(self.options.get(name) or ""))
@@ -447,6 +455,7 @@ class SimulatorPlatform(SimulationPlatform):
             args.append(f"+pastel_sidecars={self.SIDECARS_FILE}")  # relative to the run dir
         if self.waves:
             args.append(f"+pastel_waves={self.WAVES_FILE}")  # relative to cwd, the run dir
+        args += [*self.run_plusargs(), *self.option_args("sim_plusargs")]
         self._proc = self._launcher.launch(args, run_dir, self._log)
         log.info("simulator started; run directory %s", run_dir)
         began = time.monotonic()

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import random
 from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
@@ -23,6 +25,8 @@ from .simulator import (  # noqa: F401 - re-exported; device packs import these 
     _headers,
 )
 from .sources import SimSources
+
+log = logging.getLogger(__name__)
 
 
 class VerilatorImage(SimulatorImage):
@@ -97,6 +101,12 @@ class VerilatorPlatform(SimulatorPlatform):
         ``--verilator-workdir``: where models are built (shared across runs).
         ``--verilator``: the verilator executable.
         ``--verilator-args``: extra Verilator arguments (e.g. compiler flags).
+        ``--verilator-init``: ``random`` (the default) fills everything the
+        design doesn't initialise or reset with random values, as a 4-state
+        simulator's X or silicon's power-up state would expose; ``zero``
+        leaves them 0, Verilator's own default, which hides such bugs.
+        ``--verilator-seed``: the seed for ``random``; each run picks and
+        logs its own unless given, so a failing run can be repeated.
         ``--waves``: dump waveforms to :data:`WAVES_FILE` in the run directory.
     """
 
@@ -120,6 +130,34 @@ class VerilatorPlatform(SimulatorPlatform):
             '"-CFLAGS -fcoroutines -LDFLAGS -Wl,-rpath,/opt/gcc/lib64". Part of the model\'s '
             "identity, so changing them builds a new model.",
         )
+        group.addoption(
+            "--verilator-init",
+            choices=("random", "zero"),
+            default="random",
+            help="Initial values of everything the design doesn't initialise or reset: "
+            "random (default; exposes bugs a 4-state simulator or silicon would show) or "
+            "zero (Verilator's own default, which hides them).",
+        )
+        group.addoption(
+            "--verilator-seed",
+            type=int,
+            metavar="N",
+            help="Seed for --verilator-init=random; each run picks and logs one if not given.",
+        )
+
+    def run_plusargs(self) -> list[str]:
+        """Random initial values, unless ``--verilator-init=zero``."""
+        if (self.options.get("verilator_init") or "random") == "zero":
+            return []
+        seed = self.options.get("verilator_seed")
+        if seed is None:
+            seed = random.randint(1, 2**31 - 1)
+        log.info(
+            "Verilator: random initial values, seed %d (repeat with --verilator-seed=%d)",
+            seed,
+            seed,
+        )
+        return ["+verilator+rand+reset+2", f"+verilator+seed+{seed}"]
 
     def make_image(self, sources: SimSources) -> VerilatorImage:  # noqa: D102
         return VerilatorImage(

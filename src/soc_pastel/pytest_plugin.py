@@ -120,6 +120,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         parser.addini(name, text, default=default)
     sim = parser.getgroup("soc-pastel simulation")
     sim.addoption(
+        "--sim-plusargs",
+        metavar="ARGS",
+        help="Extra plusargs for every simulation run, as one shell-quoted string, "
+        "e.g. '+my_debug=1 +uvm_verbosity=HIGH'.",
+    )
+    sim.addoption(
         "--sim-launcher",
         metavar="TEMPLATE",
         help="Run the simulator through this command, e.g. 'srun -p sim' (the model's "
