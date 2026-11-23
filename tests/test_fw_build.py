@@ -228,8 +228,11 @@ def test_linker_script_layout_for_start_up_and_ecc():
                    "__rtt_start", "__rtt_end"):  # fmt: skip
         assert f"{symbol} = ." in script
     for section in (".text", ".rodata", ".data"):
-        line = next(ln for ln in script.splitlines() if ln.strip().startswith(section + " "))
-        assert "ALIGN(8)" in line and line.count("ALIGN(8)") == 2, line
+        start = script.index(f"  {section} : ")
+        body = script[start : script.index("> ", start)]
+        assert body.count("ALIGN(8)") == 2, body  # the start and the end
+    text = script[script.index("  .text : ") : script.index("> TEXT")]
+    assert text.count("QUAD(0)") == 8  # 64 bytes for instruction fetch-ahead
 
 
 @needs_toolchain
@@ -245,3 +248,6 @@ def test_loaded_segments_are_whole_words(hook_variant, tmp_path):
             s for s in ELFFile(f).iter_segments() if s["p_type"] == "PT_LOAD" and s["p_filesz"]
         ]
     assert loads and all(s["p_paddr"] % 8 == 0 and s["p_filesz"] % 8 == 0 for s in loads)
+    with open(elf, "rb") as f:
+        text = ELFFile(f).get_section_by_name(".text").data()
+    assert text[-64:] == bytes(64)  # zeros past the last instruction, for fetch-ahead

@@ -136,6 +136,8 @@ def linker_script(variant: Variant, location: CodeLocation, stack_size: int) -> 
     The sections the loader writes (``.text``, ``.rodata``, ``.data``) start
     and end on 8-byte boundaries, padded with zeros, so loading only ever
     writes whole words: memory with ECC can't be read before it is written.
+    ``.text`` also ends with 64 bytes of zeros, for instruction fetch that
+    reads ahead of the PC near the end of the code.
     """
     roles = {"TEXT": location.text, "DATA": location.data, "RTT": location.rtt_region}
     regions = {name: variant.region(name) for name in dict.fromkeys(roles.values())}
@@ -164,8 +166,16 @@ SECTIONS
 {{
   /* Loaded sections start and end on 8-byte boundaries, padded with zeros,
      so loading writes whole words and never reads one first: memory with
-     ECC (VeeR's ICCM and DCCM) can't be read until it has been written. */
-  .text : ALIGN(8) {{ KEEP(*(.text.init)) *(.text .text.*) . = ALIGN(8); }} > TEXT
+     ECC (VeeR's ICCM and DCCM) can't be read until it has been written.
+     .text also ends with 64 bytes of zeros: an instruction fetch unit reads
+     ahead of the PC (VeeR EL2's, up to 32 bytes), so near the end of the
+     code it reads past it, and that memory must have been written too.
+     Zeros decode as c.unimp, so running into them traps. */
+  .text : ALIGN(8) {{
+    KEEP(*(.text.init)) *(.text .text.*)
+    . = ALIGN(8);
+    QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0)
+  }} > TEXT
   .rodata : ALIGN(8) {{ *(.rodata .rodata.* .srodata .srodata.*) . = ALIGN(8); }} > DATA
   .data : ALIGN(8) {{ *(.data .data.*) *(.sdata .sdata.*) . = ALIGN(8); }} > DATA
   __global_pointer$ = ADDR(.data) + 0x800;
