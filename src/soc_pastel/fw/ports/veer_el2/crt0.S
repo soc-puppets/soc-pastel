@@ -25,6 +25,13 @@ _start:
   la    t0, pastel_trap_entry
   csrw  mtvec, t0
 
+  // gp before anything else: the linker relaxes "la" of nearby symbols
+  // (__bss_start, say) into gp-relative addressing.
+  .option push
+  .option norelax
+  la    gp, __global_pointer$
+  .option pop
+
   // Clear .bss, .stack and .rtt with word stores, before using the stack.
   la    a0, __bss_start
   la    a1, __bss_end
@@ -37,11 +44,6 @@ _start:
   call  clear_words
 
   la    sp, __stack_top
-  .option push
-  .option norelax
-  la    gp, __global_pointer$
-  .option pop
-
   call  pastel_port_early_init
   call  pastel_main
 1:

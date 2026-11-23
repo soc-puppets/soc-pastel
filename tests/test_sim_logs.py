@@ -181,3 +181,23 @@ def test_unexpected_or_missing_errors_fail():
 def test_a_test_that_already_failed_keeps_its_own_failure(caplog):
     finish(fake_harness([(4, "%Error: boom")]), test_failed=True)  # doesn't raise
     assert any("boom" in r.getMessage() and r.levelname == "ERROR" for r in caplog.records)
+
+
+# --- Run-time plusargs ------------------------------------------------------------------
+
+
+def test_verilator_starts_with_random_values_and_logs_the_seed(platform, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    args = platform.run_plusargs()
+    assert args[0] == "+verilator+rand+reset+2" and args[1].startswith("+verilator+seed+")
+    seed = args[1].rsplit("+", 1)[1]
+    assert f"repeat with --verilator-seed={seed}" in caplog.text
+
+
+def test_verilator_seed_and_zero(platform):
+    platform.options["verilator_seed"] = 42
+    assert platform.run_plusargs() == ["+verilator+rand+reset+2", "+verilator+seed+42"]
+    platform.options["verilator_init"] = "zero"
+    assert platform.run_plusargs() == []

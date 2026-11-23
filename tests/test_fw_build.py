@@ -214,3 +214,34 @@ def test_firmware_is_built_before_the_platform_starts(tmp_path, monkeypatch):
     with pytest.raises(Stop):
         fw.run("t.c")
     assert seen == [False, "run"]  # built with nothing started yet
+
+
+def test_linker_script_layout_for_start_up_and_ecc():
+    """The start-up code clears .bss, .stack and .rtt by these symbols, and loaded
+    sections are whole 8-byte words so loading never reads before writing."""
+    ram = MemoryRegion(name="ram", base=0, size=0x10000)
+    variant = Variant(
+        name="v", regions=(ram,), code_locations=(CodeLocation(name="ram", text="ram", data="ram"),)
+    )
+    script = linker_script(variant, variant.code_location("ram"), 4096)
+    for symbol in ("__bss_start", "__bss_end", "__stack_bottom", "__stack_top",
+                   "__rtt_start", "__rtt_end"):  # fmt: skip
+        assert f"{symbol} = ." in script
+    for section in (".text", ".rodata", ".data"):
+        line = next(ln for ln in script.splitlines() if ln.strip().startswith(section + " "))
+        assert "ALIGN(8)" in line and line.count("ALIGN(8)") == 2, line
+
+
+@needs_toolchain
+def test_loaded_segments_are_whole_words(hook_variant, tmp_path):
+    from elftools.elf.elffile import ELFFile
+
+    src = tmp_path / "t.c"
+    src.write_text(FW)
+    dev, loc = device_with(hook_variant), hook_variant.code_location("ram")
+    elf = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o")
+    with open(elf, "rb") as f:
+        loads = [
+            s for s in ELFFile(f).iter_segments() if s["p_type"] == "PT_LOAD" and s["p_filesz"]
+        ]
+    assert loads and all(s["p_paddr"] % 8 == 0 and s["p_filesz"] % 8 == 0 for s in loads)

@@ -116,6 +116,17 @@ Verilator
 executable built by Verilator and the C++ compiler, so it runs wherever its
 libraries are available.
 
+Verilator is a 2-state simulator: anything the design doesn't initialise or
+reset starts as 0 there, where a 4-state simulator would have X and silicon
+whatever it powers up with. Zeros hide bugs, so PASTEL starts each run with
+**random** initial values instead (``+verilator+rand+reset+2``), with a fresh
+seed each run, logged::
+
+    INFO    Verilator: random initial values, seed 1234567 (repeat with --verilator-seed=1234567)
+
+``--verilator-seed=<n>`` repeats a run; ``--verilator-init=zero`` goes back
+to Verilator's own zeros. The model needs no rebuilding either way.
+
 Xcelium
 -------
 
