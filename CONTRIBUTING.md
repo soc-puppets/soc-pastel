@@ -57,7 +57,10 @@ repository holds a version number to bump.
 
 To release:
 
-1. Check `main` is green in CI and has what you want to release.
+1. Check `main` is green in CI and has what you want to release. In
+   `docs/getting-started.rst`, update the tag in the command that installs the
+   VeeRwolf pack from the repository (`...soc-pastel.git@vX.Y.Z#subdirectory=...`)
+   to the version you're about to release.
 2. On GitHub, **Releases → Draft a new release**: a new tag `vX.Y.Z` on
    `main`, a title, and **Generate release notes**. Tick **Set as a
    pre-release** for a version like `v0.2.0rc1`. **Publish release**.
