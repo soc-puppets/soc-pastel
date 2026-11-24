@@ -25,17 +25,21 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/verilator
-        key: verilator-bin-${{ inputs.version }}-${{ runner.arch }}-${{ steps.image.outputs.os }}
+        # The action's own hash too, so changing how it builds rebuilds it.
+        key: verilator-bin-${{ inputs.version }}-${{ runner.arch }}-${{ steps.image.outputs.os }}-${{ hashFiles('.github/actions/verilator/action.yml') }}
     - if: steps.cache.outputs.cache-hit != 'true'
       name: Build Verilator ${{ inputs.version }}
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y git autoconf flex bison help2man libfl-dev zlib1g-dev ccache
+        sudo apt-get install -y git autoconf flex bison help2man libfl-dev zlib1g-dev
         git clone --depth 1 --branch "v${{ inputs.version }}" https://github.com/verilator/verilator.git /tmp/verilator-src
         cd /tmp/verilator-src
         autoconf
-        ./configure --prefix="$HOME/verilator"
+        # No ccache in the makefiles Verilator generates, even if the runner has
+        # it: a later run restoring this cache might not. (OBJCACHE, set, skips
+        # configure's search; "env g++ ..." just runs g++.)
+        OBJCACHE=env ./configure --prefix="$HOME/verilator"
         make -j"$(nproc)"
         make install
     - shell: bash

@@ -26,3 +26,20 @@ def file_lock(path: Path) -> Iterator[None]:
             yield
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def log_tail(path: Path, chars: int = 1500) -> str:
+    """The end of the file at ``path``, after a colon and newline, for an error message.
+
+    Empty if the file is missing or empty.
+    """
+    try:
+        tail = path.read_text(errors="replace")[-chars:].strip()
+    except OSError:
+        return ""
+    return f":\n{tail}" if tail else ""
+
+
+def describe_exit(status: int) -> str:
+    """How a process ended, from its exit status (negative: the signal that killed it)."""
+    return f"was killed by signal {-status}" if status < 0 else f"exited with status {status}"

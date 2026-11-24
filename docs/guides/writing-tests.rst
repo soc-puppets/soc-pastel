@@ -456,7 +456,12 @@ when the firmware starts. ``timeout_s=`` adds a plain wall-clock limit.
 
 Only waits PASTEL does itself (``firmware.run()``, a started run's waits,
 ``ocd.wait_halted()``) notice a timeout straight away. A test that loops in its
-own Python finds out when it next touches the target.
+own Python finds out when it next touches the target, or can call
+``harness.check()`` in its loop.
+
+The same waits also notice at once if the platform fails: a sidecar such as
+OpenOCD dies, or the simulator exits. The test then fails with the process's
+exit status and the end of its log, rather than waiting for the time limit.
 
 .. _waves:
 

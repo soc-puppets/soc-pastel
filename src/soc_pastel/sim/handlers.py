@@ -9,6 +9,7 @@ from soc_pastel.core.device import Variant
 from soc_pastel.core.endpoints import EndpointHandler, EndpointInfo
 from soc_pastel.core.errors import PastelTimeout, ProtocolError, TargetError
 from soc_pastel.core.memory import MemoryInterface
+from soc_pastel.core.util import describe_exit
 
 _REPLY_TIMEOUT_S = 60.0
 
@@ -237,10 +238,6 @@ class Pipe(EndpointHandler):
         if not ok:
             raise PastelTimeout(f"no reply from sidecar {self.info.name!r} within {timeout_s} s")
         if self.exit_status is not None:
-            how = (
-                f"was killed by signal {-self.exit_status}"
-                if self.exit_status < 0
-                else f"exited with status {self.exit_status}"
-            )
+            how = describe_exit(self.exit_status)
             raise PipeClosed(f"sidecar {self.info.name!r} {how}", self.exit_status)
         raise PipeClosed(f"simulation ended while waiting for {self.info.name!r}", None)

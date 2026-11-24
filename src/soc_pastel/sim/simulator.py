@@ -33,7 +33,7 @@ from soc_pastel.core.endpoints import EndpointHandler
 from soc_pastel.core.errors import ConfigurationError, PastelTimeout, ProtocolError, TargetError
 from soc_pastel.core.memory import MemoryInterface
 from soc_pastel.core.platform import PlatformImage, SimulationPlatform
-from soc_pastel.core.util import file_lock
+from soc_pastel.core.util import describe_exit, file_lock, log_tail
 
 from .handlers import Backdoor, BackdoorMemory, Pipe, PlatformControl
 from .launch import SimLauncher, SimProcess, connect_timeout, make_launcher
@@ -518,6 +518,28 @@ class SimulatorPlatform(SimulationPlatform):
             and self._session is not None
             and not self._session.closed
         )
+
+    def check(self) -> None:
+        """Raise if a sidecar has exited, or the simulator has, during the run."""
+        session = self._session
+        if session is None:
+            return
+        for sidecar in self.sidecars:
+            try:
+                status = getattr(session.handler(sidecar.name), "exit_status", None)
+            except Exception:  # not announced (yet): nothing to say
+                continue
+            if status is not None:
+                log = self.run_dir / sidecar.log
+                raise TargetError(
+                    f"sidecar {sidecar.name!r} {describe_exit(status)} during the test; "
+                    f"see {log}" + log_tail(log)
+                )
+        if self._proc is not None and self._proc.poll() is not None:
+            raise TargetError(
+                f"the simulator {describe_exit(self._proc.poll())} during the test; "
+                f"see {self.log_path}" + log_tail(self.log_path)
+            )
 
     def _control(self) -> PlatformControl:
         return self.endpoints.handler("platform")  # type: ignore[return-value]
