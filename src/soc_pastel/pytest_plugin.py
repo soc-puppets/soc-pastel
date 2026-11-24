@@ -31,7 +31,7 @@ from .core.harness import PlatformHarness
 from .core.interface import Interface
 from .core.timeout import TimeoutSettings
 from .core.util import XERROR
-from .reporting import MODEL_LOG, RUN_DIR, WAVES, Reporter, turn_on_live_logging
+from .reporting import MODEL_LOG, REPLAY, RUN_DIR, WAVES, Reporter, turn_on_live_logging
 from .sim.logcheck import LogFindings, split_expected
 
 try:  # pytest internals; see pytest_runtest_setup below
@@ -120,6 +120,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         parser.addini(name, text, default=default)
     sim = parser.getgroup("soc-pastel simulation")
     sim.addoption(
+        "--sim-plusargs",
+        metavar="ARGS",
+        help="Extra plusargs for every simulation run, as one shell-quoted string, "
+        "e.g. '+my_debug=1 +uvm_verbosity=HIGH'.",
+    )
+    sim.addoption(
         "--sim-launcher",
         metavar="TEMPLATE",
         help="Run the simulator through this command, e.g. 'srun -p sim' (the model's "
@@ -182,6 +188,9 @@ def _finish_simulation(item: pytest.Item, *, test_failed: bool) -> None:
     harness = getattr(item, "funcargs", {}).get("harness")
     if not isinstance(harness, PlatformHarness):
         return
+    replay = getattr(harness._platform, "replay_options", ())
+    if replay:  # e.g. the random seed: so any failure can be run again exactly
+        item.user_properties.append((REPLAY, " ".join(replay)))
     if harness.timeout.expired:  # stopped by the watchdog: its log only shows that
         harness.close()
         return

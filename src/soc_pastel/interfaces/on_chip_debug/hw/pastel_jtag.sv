@@ -5,8 +5,11 @@
 // Serves JTAG on a Unix socket for OpenOCD running beside the simulator.
 // Optional plusarg: +pastel_jtag_port=<n> to serve it on TCP port n on
 // loopback instead (0: any free port), for use with your own OpenOCD.
-// TRST is held asserted until the debugger releases it, so the TAP starts in
-// reset rather than in an unknown state.
+// TRST starts high and is asserted on the first clock edge, so a TAP that
+// resets on TRST's falling edge sees one, then held asserted until the
+// debugger releases it: the TAP starts in reset rather than in an unknown
+// state. (Starting it low would leave such a TAP with whatever its flops
+// started as: random in Verilator with random initial values, and on silicon.)
 
 module pastel_jtag (
   input  logic clk,
@@ -19,7 +22,7 @@ module pastel_jtag (
   import "DPI-C" function int pastel_jtag_open(input int port);
   import "DPI-C" function void pastel_jtag_tick(input bit tdo, output bit tck, output bit tms,
                                                 output bit tdi, output bit trst_n);
-  bit tck_b, tms_b, tdi_b, trst_n_b = 1'b0;  // TAP in reset until OpenOCD releases it
+  bit tck_b, tms_b, tdi_b, trst_n_b = 1'b1;  // the first tick drives it low (see above)
   int port = -1;  // Unix socket
 
   initial begin

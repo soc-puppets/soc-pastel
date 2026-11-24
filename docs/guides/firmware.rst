@@ -100,8 +100,13 @@ The linker script is generated too, from the code location:
    * - ``.rtt`` (RTT control block and buffers)
      - Its ``rtt`` region
 
-Firmware is loaded directly into place: ``.data`` needs no copying, and the
-start-up code clears ``.bss``.
+Firmware is loaded directly into place: ``.data`` needs no copying. The
+start-up code clears ``.bss``, the stack and the RTT buffers with whole-word
+stores before anything uses them, and the loaded sections start and end on
+8-byte boundaries, so loading writes whole words too. Memory with ECC, such as
+VeeR's ICCM and DCCM, can't take a smaller store until a whole word has been
+written: the store reads the word first, and an unwritten word has no valid
+check bits.
 
 The chip's own headers
 ----------------------

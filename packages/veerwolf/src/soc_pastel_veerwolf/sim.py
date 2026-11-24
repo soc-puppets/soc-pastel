@@ -16,6 +16,7 @@ from pathlib import Path
 
 from soc_pastel.core.errors import ConfigurationError
 from soc_pastel.sim.sources import SimSources
+from soc_pastel.sim.verilator import verilator_version
 
 from . import HDL_ROOT
 
@@ -59,7 +60,23 @@ def _absolute(arg: str, base: Path) -> str:
     return str(base / arg)
 
 
-def sim_sources(workdir: Path) -> SimSources:
+def _tool_args(platform: str) -> dict[str, tuple[str, ...]]:
+    """Run edge-triggered blocks once at time 0 (Verilator 5.044 and later).
+
+    With random initial values, an async reset that starts low never falls,
+    so flops on clocks gated off in reset would keep random values; VeeR's
+    core reset is also gated by the debug module's ndmreset. A 4-state
+    simulator resets them (X to 0 is a falling edge); --x-initial-edge makes
+    Verilator do the same. With --timing it needs 5.044 or later: earlier
+    versions fail with "Missed a time slot?". See PASTEL's simulators guide.
+    """
+    if platform != "verilator":
+        return {}
+    version = verilator_version()
+    return {"verilator": ("--x-initial-edge",)} if version and version >= (5, 44) else {}
+
+
+def sim_sources(workdir: Path, platform: str = "verilator") -> SimSources:
     """Return the Verilator sources for the PASTEL VeeRwolf testbench."""
     build_root = workdir / "veerwolf-lint"
     marker = build_root / "pastel-setup-done"
@@ -92,4 +109,9 @@ def sim_sources(workdir: Path) -> SimSources:
         str(vw / "rtl" / "axi_ram.v"),
         str(HDL_ROOT / "pastel_veerwolf_tb.sv"),
     ]
-    return SimSources(top="pastel_veerwolf_tb", args=tuple(args), key=VEERWOLF_COMMIT)
+    return SimSources(
+        top="pastel_veerwolf_tb",
+        args=tuple(args),
+        key=VEERWOLF_COMMIT,
+        tool_args=_tool_args(platform),
+    )

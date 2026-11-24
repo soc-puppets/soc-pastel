@@ -119,7 +119,9 @@ void pastel_finish(int32_t result) {
 }
 
 void pastel_fault(uint32_t cause, uint32_t pc, uint32_t tval) {
-  uint8_t b[12];
+  // Static, not on the stack: the fault may be the stack's own memory (see
+  // the port's trap entry, which calls this at most twice).
+  static uint8_t b[12];
   put_u32(b, cause);
   put_u32(b + 4, pc);
   put_u32(b + 8, tval);

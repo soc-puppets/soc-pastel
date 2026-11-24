@@ -26,6 +26,9 @@ pytest options
        made yourself.
    * - ``--pastel-no-timeout``
      - Don't time tests out (see :ref:`timeouts`), for debugging interactively.
+   * - ``--sim-plusargs=<args>``
+     - Extra plusargs for every simulation run, as one shell-quoted string,
+       e.g. ``"+my_debug=1"``.
    * - ``--sim-launcher=<template>``
      - Run the simulator through a command: a prefix (``srun -p sim``) or a
        template with ``{cmd}`` (``ssh simbox {cmd}``). See
@@ -59,6 +62,11 @@ Verilator platform (``--platform=verilator``):
        ``"-CFLAGS -fcoroutines -LDFLAGS -Wl,-rpath,/opt/gcc/lib64"``. They
        are part of the model's identity, so changing them builds a new
        model.
+   * - ``--verilator-init=random|zero``
+     - What everything the design doesn't initialise or reset starts as:
+       ``random`` (the default) or ``zero`` (see :doc:`../guides/simulators`).
+   * - ``--verilator-seed=<n>``
+     - Seed for random initial values; each run picks and logs one if not given.
 
 Xcelium (``--platform=xcelium``), VCS (``--platform=vcs``, experimental) and
 Questa (``--platform=questa``, experimental) have the same options, with their

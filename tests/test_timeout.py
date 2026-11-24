@@ -98,7 +98,7 @@ def test_simulation_times_out_after_chip_time_plus_grace():
     assert w.expired is None
     assert wait_for(lambda: w.expired is not None)
     assert "more than 2 ms of chip time, plus 0.2 s grace" in w.expired
-    assert sim.stopped
+    assert wait_for(lambda: sim.stopped)
     with pytest.raises(PastelTimeout, match="2 ms of chip time"):
         w.check()
     w.stop()
@@ -137,7 +137,7 @@ def test_stuck_simulation_times_out():
     w.start()
     assert wait_for(lambda: w.expired is not None)
     assert "simulation time stopped at 42.000 ms for 0.2 s" in w.expired
-    assert sim.stopped
+    assert wait_for(lambda: sim.stopped)  # the reason is recorded first, then it stops
 
 
 def test_advancing_simulation_is_not_stuck():

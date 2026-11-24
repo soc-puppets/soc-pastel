@@ -34,9 +34,11 @@ RUN_DIR = "pastel_run_dir"
 MODEL_LOG = "pastel_model_log"
 #: Report property: the test's waveform.
 WAVES = "pastel_waves"
+#: Report property: pytest options that repeat the test's simulation exactly.
+REPLAY = "pastel_replay"
 
 #: Logs worth pointing at, in a run directory (relative glob patterns).
-RUN_LOGS = ("*.log", "fw/*/build.log")
+RUN_LOGS = ("*.log", "sim.cmd", "fw/*/build.log")
 
 #: The live-log format PASTEL sets when the user hasn't chosen one.
 LIVE_FORMAT = "%(levelname)-7s %(message)s"
@@ -73,6 +75,7 @@ def where_to_look(user_properties: Any) -> str:
     lines += [
         f"model build log: {log}" for log in dict.fromkeys(_props(user_properties, MODEL_LOG))
     ]
+    lines += [f"repeat with: {opts}" for opts in _props(user_properties, REPLAY)[:1]]
     return "\n".join(lines)
 
 

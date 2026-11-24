@@ -45,14 +45,16 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator gcc-riscv64-unknown-elf openocd libbit-vector-perl
+          sudo apt-get install -y gcc-riscv64-unknown-elf openocd libbit-vector-perl
+      - id: verilator
+        uses: ./.github/actions/verilator
       - run: pip install -e . -e packages/veerwolf
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/fusesoc
             .pastel/verilator
-          key: verilator-${{ hashFiles('src/soc_pastel/sim/**', 'src/soc_pastel/interfaces/on_chip_debug/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/sim.py') }}
+          key: verilator-${{ steps.verilator.outputs.version }}-${{ hashFiles('src/soc_pastel/sim/**', 'src/soc_pastel/interfaces/on_chip_debug/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/hw/**', 'packages/veerwolf/src/soc_pastel_veerwolf/sim.py') }}
       - name: Real Verilator builds (build-log errors and warnings)
         run: pytest tests/test_sim_build_verilator.py
       - name: Conformance suite on VeeRwolf (Verilator, ${{ matrix.location }})
