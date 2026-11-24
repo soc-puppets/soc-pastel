@@ -1,0 +1,18 @@
+# Restores (or rebuilds) the Verilator cache weekly from main, so GitHub's
+# 7-day eviction of unused caches doesn't force a rebuild in a quiet week.
+name: Keep caches warm
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verilator:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/verilator

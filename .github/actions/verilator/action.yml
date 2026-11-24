@@ -1,0 +1,44 @@
+# Verilator, built from source once and cached: CI tests a current Verilator
+# rather than the runner distribution's (Ubuntu 24.04 has 5.020; 26.04, 5.032).
+# The cache is keyed on the version and the runner image, and GitHub evicts
+# caches unused for 7 days; keep-caches-warm.yml restores it weekly from main,
+# so normally only a version bump rebuilds it (about 10-15 minutes).
+name: Verilator
+description: Restore Verilator from the cache, or build and cache it, and put it on PATH.
+inputs:
+  version:
+    description: Verilator release (git tag without the "v").
+    default: "5.054"
+outputs:
+  version:
+    description: The Verilator version on PATH.
+    value: ${{ inputs.version }}
+runs:
+  using: composite
+  steps:
+    # The runner's OS release (e.g. ubuntu24), not its weekly image version,
+    # which would rebuild the cache every week.
+    - id: image
+      shell: bash
+      run: echo "os=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/verilator
+        key: verilator-bin-${{ inputs.version }}-${{ runner.arch }}-${{ steps.image.outputs.os }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      name: Build Verilator ${{ inputs.version }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git autoconf flex bison help2man libfl-dev zlib1g-dev ccache
+        git clone --depth 1 --branch "v${{ inputs.version }}" https://github.com/verilator/verilator.git /tmp/verilator-src
+        cd /tmp/verilator-src
+        autoconf
+        ./configure --prefix="$HOME/verilator"
+        make -j"$(nproc)"
+        make install
+    - shell: bash
+      run: |
+        echo "$HOME/verilator/bin" >> "$GITHUB_PATH"
+        "$HOME/verilator/bin/verilator" --version

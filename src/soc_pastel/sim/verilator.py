@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import random
+import re
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
@@ -27,6 +31,24 @@ from .simulator import (  # noqa: F401 - re-exported; device packs import these 
 from .sources import SimSources
 
 log = logging.getLogger(__name__)
+
+
+@functools.cache
+def verilator_version(executable: str = "verilator") -> tuple[int, int] | None:
+    """Verilator's version as ``(major, minor)``, e.g. ``(5, 54)``; None if it can't tell.
+
+    For device packs whose ``sim_sources`` hook needs a newer Verilator for
+    some argument, e.g. ``--x-initial-edge`` with ``--timing``, fixed in 5.044.
+    """
+    path = shutil.which(executable)
+    if path is None:
+        return None
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"Verilator (\d+)\.(\d+)", out.stdout)
+    return (int(match.group(1)), int(match.group(2))) if match else None
 
 
 class VerilatorImage(SimulatorImage):

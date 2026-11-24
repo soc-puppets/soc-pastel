@@ -127,6 +127,30 @@ seed each run, logged::
 ``--verilator-seed=<n>`` repeats a run; ``--verilator-init=zero`` goes back
 to Verilator's own zeros. The model needs no rebuilding either way.
 
+.. note::
+
+   **Resets that start asserted.** In Verilator, a flop with an asynchronous
+   reset (``always @(posedge clk or negedge rst_n)``) resets only on a real
+   falling edge of ``rst_n``, or on a clock edge while it is low. A reset
+   that is already low at time 0 never falls, so with random initial values,
+   flops whose clocks are gated off during reset keep random values. So do
+   flops behind a reset controller whose own output starts asserted at
+   random, such as VeeR's core reset, which the debug module also gates. A
+   4-state simulator resets them, since X to 0 counts as a falling edge.
+
+   The usual fix is Verilator's ``--x-initial-edge``, which runs every
+   edge-triggered block once at time 0. Add it in the device pack's
+   ``sim_sources`` hook, with ``tool_args={"verilator": ("--x-initial-edge",)}``,
+   or for one run with ``--verilator-args=--x-initial-edge``. It needs
+   **Verilator 5.044 or later**: with PASTEL's testbenches (which use
+   Verilator's timing support), earlier versions fail with "Missed a time
+   slot?". The VeeRwolf pack adds it only when
+   :func:`~soc_pastel.sim.verilator.verilator_version` reports 5.044 or later. It has a side effect, which is why
+   PASTEL doesn't make it the default: blocks triggered on a clock alone also
+   see that extra edge at time 0, so a clocked assertion, say, can fire before
+   reset. See `Verilator issue #4424
+   <https://github.com/verilator/verilator/issues/4424>`_.
+
 Xcelium
 -------
 

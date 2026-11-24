@@ -202,3 +202,18 @@ def test_verilator_seed_and_zero(platform):
     assert platform.replay_options == ("--verilator-seed=42",)  # shown when a test fails
     platform.options["verilator_init"] = "zero"
     assert platform.run_plusargs() == []
+
+
+def test_verilator_version(tmp_path, monkeypatch):
+    from soc_pastel.sim.verilator import verilator_version
+
+    fake = tmp_path / "verilator"
+    fake.write_text("#!/bin/sh\necho 'Verilator 5.044 2026-01-01 rev v5.044'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    verilator_version.cache_clear()
+    try:
+        assert verilator_version() == (5, 44)
+        assert verilator_version("no-such-verilator") is None
+    finally:
+        verilator_version.cache_clear()
