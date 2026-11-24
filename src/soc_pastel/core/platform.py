@@ -145,6 +145,16 @@ class Platform(ABC):
         """Platform time in nanoseconds, or None if only wall-clock time exists."""
         return None
 
+    def check(self) -> None:  # noqa: B027 - an optional hook, not an abstract method
+        """Raise :class:`~soc_pastel.core.errors.TargetError` if the platform has failed.
+
+        For something that ends the test however long it waits, such as a
+        helper process that has died. PASTEL's waits call it (through
+        :meth:`PlatformHarness.check <soc_pastel.core.harness.PlatformHarness.check>`)
+        so they fail at once rather than at the time limit. The default does
+        nothing.
+        """
+
     def backdoor(self) -> MemoryInterface | None:
         """Backdoor memory access, or None if the platform has none."""
         return None

@@ -175,15 +175,16 @@ class OnChipDebug(Interface):
         """Wait until the CPU halts (at a breakpoint, say); return the PC.
 
         Gives up with :class:`~soc_pastel.core.errors.PastelTimeout` after
-        ``timeout_s`` (if given), or when the test times out.
+        ``timeout_s`` (if given), or when the test times out, and with
+        :class:`~soc_pastel.core.errors.TargetError` if the platform fails.
         """
         from .errors import PastelTimeout
 
         deadline = None if timeout_s is None else time.monotonic() + timeout_s
-        watchdog = getattr(self.harness, "timeout", None)
+        check = getattr(self.harness, "check", None)
         while self.state() is not TargetState.HALTED:
-            if watchdog is not None:
-                watchdog.check()
+            if callable(check):
+                check()  # timed out, or the platform failed (e.g. OpenOCD died)
             if deadline is not None and time.monotonic() > deadline:
                 raise PastelTimeout(f"the CPU did not halt within {timeout_s:g} s")
             time.sleep(poll_s)

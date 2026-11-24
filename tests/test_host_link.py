@@ -31,7 +31,7 @@ def test_waiting_while_the_firmware_is_held_warns(caplog):
 
     from soc_pastel.fw.runner import FirmwareRun
 
-    harness = SimpleNamespace(timeout=SimpleNamespace(check=lambda: None))
+    harness = SimpleNamespace(timeout=SimpleNamespace(check=lambda: None), check=lambda: None)
     run = FirmwareRun(harness, Path("held.elf"))
     run.HELD_WARNING_S = 0.1
     run._held = [struct.pack("<I", 1)]  # held at waiting checkpoint 1
@@ -75,10 +75,29 @@ def test_a_previous_runs_rtt_block_is_invalidated_before_the_firmware_starts(mon
             events.append("resume")
             rtt_id[:] = b"SEGGER RTT\0\0\0\0\0\0"  # the new firmware sets it up
 
-    harness = SimpleNamespace(ocd=Ocd(), timeout=SimpleNamespace(check=lambda: None))
+    harness = SimpleNamespace(
+        ocd=Ocd(), timeout=SimpleNamespace(check=lambda: None), check=lambda: None
+    )
     monkeypatch.setattr(runner, "load_elf", lambda h, elf: 0x100)
     monkeypatch.setattr(runner, "elf_symbol", lambda elf, name: 0x2000)
     monkeypatch.setattr(runner, "memory_for", lambda h, addr, length: Memory())
     run = runner.FirmwareRun(harness, Path("fw.elf"))
     run._launch()
     assert events == ["reset", ("clear id", bytes(16)), "resume"]
+
+
+def test_a_failed_platform_ends_a_wait_at_once():
+    """Issue #7: a wait fails as soon as the platform does, not at the time limit."""
+    import struct
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from soc_pastel.fw.runner import FirmwareRun
+
+    def check():
+        raise TargetError("sidecar 'on_chip_debug.openocd' was killed by signal 11")
+
+    run = FirmwareRun(SimpleNamespace(check=check), Path("fw.elf"))
+    run._held = [struct.pack("<I", 1)]
+    with pytest.raises(TargetError, match="killed by signal 11"):
+        run.wait_checkpoint(2)

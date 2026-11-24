@@ -288,7 +288,7 @@ class FirmwareRun:
 
     def _check(self, what: str) -> None:
         """Raise if the test has timed out, or ``timeout_s`` has passed."""
-        self.harness.timeout.check()
+        self.harness.check()
         if self._deadline is not None and time.monotonic() > self._deadline:
             raise PastelTimeout(f"{what} within {self._timeout_s:g} s")
 

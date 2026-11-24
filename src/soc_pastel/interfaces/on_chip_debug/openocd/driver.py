@@ -17,6 +17,7 @@ from soc_pastel.core.errors import ConfigurationError, PastelTimeout, TargetErro
 from soc_pastel.core.memory import MemoryInterface, WordMemory
 from soc_pastel.core.on_chip_debug import OnChipDebug, TargetState
 from soc_pastel.core.platform import Sidecar, SimulationPlatform
+from soc_pastel.core.util import log_tail
 
 from .config import OpenOcdConfig, fragment_path
 
@@ -43,14 +44,6 @@ def _fragment(kind: str, value: str) -> str:
     if "\n" in value or " " in value:
         return value
     return fragment_path(kind, value).read_text()
-
-
-def _log_tail(path: Path, chars: int = 1500) -> str:
-    try:
-        tail = path.read_text(errors="replace")[-chars:].strip()
-    except OSError:
-        return ""
-    return f":\n{tail}" if tail else ""
 
 
 class _SocketLink:
@@ -146,6 +139,7 @@ class OpenOcd(OnChipDebug):
         self._tcl_lock = threading.RLock()
         self._link: _SocketLink | _PipeLink | None = None
         self._sidecar: str | None = None
+        self._log_path: Path = Path(_LOG)
         self._memory = _OcdMemory(self)
 
     @property
@@ -203,6 +197,7 @@ class OpenOcd(OnChipDebug):
     def open(self) -> None:  # noqa: D102
         timeout_s = float(self.config.get("startup_timeout_s", 120))
         log_path = self.harness.platform.run_dir / _LOG
+        self._log_path = log_path
         began = time.monotonic()
         if self._sidecar is not None:
             self._open_sidecar(timeout_s, log_path)
@@ -222,11 +217,11 @@ class OpenOcd(OnChipDebug):
             self._link = None
             hint = " (is it installed on the simulation machine?)" if e.exit_status == 127 else ""
             raise TargetError(
-                f"OpenOCD exited during start-up{hint}: {e}; see {log}" + _log_tail(log)
+                f"OpenOCD exited during start-up{hint}: {e}; see {log}" + log_tail(log)
             ) from None
         except PastelTimeout:
             raise PastelTimeout(
-                f"OpenOCD did not start in time; see {log}" + _log_tail(log)
+                f"OpenOCD did not start in time; see {log}" + log_tail(log)
             ) from None
 
     def _open_local(self, timeout_s: float, log: Path) -> None:
@@ -247,7 +242,7 @@ class OpenOcd(OnChipDebug):
         sock = None
         while sock is None:
             if self._proc.poll() is not None:
-                raise TargetError(f"OpenOCD exited during start-up; see {log}" + _log_tail(log))
+                raise TargetError(f"OpenOCD exited during start-up; see {log}" + log_tail(log))
             if time.monotonic() > deadline:
                 raise PastelTimeout("OpenOCD did not start in time")
             try:
@@ -283,8 +278,15 @@ class OpenOcd(OnChipDebug):
         wrapped = (
             f'if {{[catch {{{command}}} __r]}} {{set __o "ERR:$__r"}} else {{set __o "OK:$__r"}}'
         )
+        from soc_pastel.sim.handlers import PipeClosed
+
         with self._tcl_lock:
-            reply = self._link.request(wrapped.encode(), timeout_s).decode(errors="replace")
+            try:
+                reply = self._link.request(wrapped.encode(), timeout_s).decode(errors="replace")
+            except PipeClosed as e:  # OpenOCD has gone: say why, from its own log
+                raise TargetError(
+                    f"OpenOCD stopped ({e}); see {self._log_path}" + log_tail(self._log_path)
+                ) from None
         if reply.startswith("OK:"):
             return reply[3:].strip()
         shown = command if len(command) < 120 else command[:117] + "..."

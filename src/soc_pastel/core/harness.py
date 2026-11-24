@@ -83,6 +83,18 @@ class PlatformHarness:
         """
         self.expected_sim_errors.append(pattern)
 
+    def check(self) -> None:
+        """Raise if the test can't go on, whatever it waits for.
+
+        :class:`~soc_pastel.core.errors.PastelTimeout` if it has timed out;
+        :class:`~soc_pastel.core.errors.TargetError` if the platform has
+        failed, e.g. a sidecar such as OpenOCD has died. Every wait PASTEL
+        does calls this; a test waiting in its own loop can too.
+        """
+        self.timeout.check()
+        if self._state == "open":
+            self._platform.check()
+
     @property
     def started(self) -> bool:
         """True once the platform has been started (even if it has since stopped)."""
