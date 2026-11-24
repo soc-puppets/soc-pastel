@@ -468,6 +468,7 @@ class Firmware:
         include_dirs: Iterable[str | Path] = (),
         defines: Iterable[str] = (),
         stack_size: int | None = None,
+        listings: bool = True,
         chip_ms: float | None = None,
         timeout_s: float | None = None,
         expect_pass: bool = True,
@@ -476,7 +477,8 @@ class Firmware:
     ):
         """Build and run firmware; return its :class:`~soc_pastel.fw.runner.FirmwareResult`.
 
-        ``include_dirs``, ``defines`` and ``stack_size`` go to :meth:`build`; the
+        ``include_dirs``, ``defines``, ``stack_size`` and ``listings`` go to
+        :meth:`build`; the
         rest (``on_checkpoint``, ...) to :func:`~soc_pastel.fw.runner.run_firmware`.
 
         ``chip_ms`` gives the firmware its own time limit, in ms of chip time
@@ -495,7 +497,9 @@ class Firmware:
         __tracebackhide__ = True
         from .fw.runner import run_firmware
 
-        build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
+        build_opts: dict[str, Any] = {"listings": listings}
+        if stack_size is not None:
+            build_opts["stack_size"] = stack_size
         elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
         result = run_firmware(
             self.harness,
@@ -518,6 +522,7 @@ class Firmware:
         include_dirs: Iterable[str | Path] = (),
         defines: Iterable[str] = (),
         stack_size: int | None = None,
+        listings: bool = True,
         chip_ms: float | None = None,
         timeout_s: float | None = None,
         expect_pass: bool = True,
@@ -538,7 +543,9 @@ class Firmware:
         """
         from .fw.runner import FirmwareRun
 
-        build_opts: dict[str, Any] = {} if stack_size is None else {"stack_size": stack_size}
+        build_opts: dict[str, Any] = {"listings": listings}
+        if stack_size is not None:
+            build_opts["stack_size"] = stack_size
         elf = self.build(*sources, include_dirs=include_dirs, defines=defines, **build_opts)
         run = FirmwareRun(
             self.harness,

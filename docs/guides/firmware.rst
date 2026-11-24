@@ -149,9 +149,16 @@ launcher, submitting a job.
 
    <run directory>/fw/<first source>-<code location>/
        <first source>-<code location>.elf
+       <first source>-<code location>.map   the linker's map, with cross-references
+       <first source>-<code location>.dis   disassembly, with the source interleaved
+       <first source>-<code location>.sym   symbols in address order, with sizes
        build.log          the compiler command line, then its output
        gen/memory_map.h   generated from the descriptor
        gen/link.ld        generated from the code location
+
+The map, disassembly and symbol list are for mapping a PC or an address seen
+in a waveform or a debugger back to code. ``firmware.build(..., listings=False)``
+(or ``run()``, ``start()``) leaves them out.
 
 **What:** one ``gcc`` call compiles and links PASTEL's runtime (start-up code,
 RTT, the mailbox, ``printf``) and the test's sources together. It uses:

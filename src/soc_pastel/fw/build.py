@@ -238,6 +238,7 @@ def build_firmware(
     defines: Iterable[str] = (),
     stack_size: int = DEFAULT_STACK_SIZE,
     toolchain: Toolchain | None = None,
+    listings: bool = True,
 ) -> Path:
     """Compile and link test firmware; return the ELF path.
 
@@ -245,6 +246,13 @@ def build_firmware(
     the ELF, ``build.log`` and the generated ``gen/memory_map.h`` and
     ``gen/link.ld``. Compiler warnings are logged; errors raise
     :class:`FirmwareBuildError`.
+
+    With ``listings`` (the default), it also writes, next to the ELF, for
+    mapping PCs and addresses in a waveform or a debugger back to code:
+    ``<stem>.map``, the linker's map with a cross-reference table;
+    ``<stem>.dis``, the disassembly with source interleaved; and
+    ``<stem>.sym``, the symbols in address order, with sizes. If the listing
+    tools fail, that is logged as a warning and the build still succeeds.
     """
     tc = toolchain or Toolchain()
     sources = [Path(s).resolve() for s in sources]
@@ -282,7 +290,11 @@ def build_firmware(
     script = linker_script(variant, location, stack_size)
     elf = work / f"{stem}.elf"
     began = time.monotonic()
+    if listings:
+        flags.append(f"-Wl,-Map={work / f'{stem}.map'},--cref")
     warnings = _compile(tc, flags, header, script, all_sources, include_dirs, work, elf)
+    if listings:
+        _write_listings(tc, elf)
     took = time.monotonic() - began
     if warnings:
         log.warning(
@@ -297,6 +309,26 @@ def build_firmware(
     else:
         log.info("built %s in %.1f s", elf.name, took)
     return elf
+
+
+def _write_listings(tc: Toolchain, elf: Path) -> None:
+    """Write the disassembly (``.dis``) and symbol list (``.sym``) next to ``elf``."""
+    for suffix, tool, args in (
+        (".dis", "objdump", ["-d", "-S", "-C"]),
+        (".sym", "nm", ["-n", "-S", "-C"]),
+    ):
+        out = elf.with_suffix(suffix)
+        try:
+            result = subprocess.run(
+                [tc.tool(tool), *args, str(elf)], capture_output=True, text=True, timeout=120
+            )
+        except (ConfigurationError, OSError, subprocess.TimeoutExpired) as e:
+            log.warning("could not write %s: %s", out.name, e)
+            continue
+        if result.returncode != 0:
+            log.warning("could not write %s: %s", out.name, result.stderr.strip()[-500:])
+            continue
+        out.write_text(result.stdout)
 
 
 def _compile(

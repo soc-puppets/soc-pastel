@@ -251,3 +251,47 @@ def test_loaded_segments_are_whole_words(hook_variant, tmp_path):
     with open(elf, "rb") as f:
         text = ELFFile(f).get_section_by_name(".text").data()
     assert text[-64:] == bytes(64)  # zeros past the last instruction, for fetch-ahead
+
+
+@needs_toolchain
+def test_map_disassembly_and_symbols_are_written(hook_variant, tmp_path):
+    src = tmp_path / "t.c"
+    src.write_text(FW)
+    dev, loc = device_with(hook_variant), hook_variant.code_location("ram")
+    elf = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o")
+    stem = elf.with_suffix("")
+    assert "Cross Reference Table" in stem.with_suffix(".map").read_text()
+    dis = stem.with_suffix(".dis").read_text()
+    assert "<test_main>:" in dis and "pastel_read32(CHIP_REG_GPIO)" in dis  # source interleaved
+    sym = stem.with_suffix(".sym").read_text()
+    assert " test_main\n" in sym and " _SEGGER_RTT\n" in sym
+    lines = [line.split()[0] for line in sym.splitlines() if line.split()[0] != "U"]
+    assert lines == sorted(lines, key=lambda a: int(a, 16))  # address order
+
+
+@needs_toolchain
+def test_listings_can_be_left_out(hook_variant, tmp_path):
+    src = tmp_path / "t.c"
+    src.write_text(FW)
+    dev, loc = device_with(hook_variant), hook_variant.code_location("ram")
+    elf = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o", listings=False)
+    assert not any(elf.with_suffix(s).exists() for s in (".map", ".dis", ".sym"))
+
+
+@needs_toolchain
+def test_a_listing_tool_failing_only_warns(hook_variant, tmp_path, monkeypatch, caplog):
+    src = tmp_path / "t.c"
+    src.write_text(FW)
+    real = Toolchain.tool
+
+    def no_objdump(self, name):
+        if name == "objdump":
+            raise ConfigurationError("riscv64-unknown-elf-objdump not found")
+        return real(self, name)
+
+    monkeypatch.setattr(Toolchain, "tool", no_objdump)
+    dev, loc = device_with(hook_variant), hook_variant.code_location("ram")
+    elf = build_firmware(dev, hook_variant, loc, [src], tmp_path / "o")
+    assert elf.is_file() and elf.with_suffix(".sym").is_file()
+    assert not elf.with_suffix(".dis").exists()
+    assert "could not write t-ram.dis" in caplog.text
